@@ -1,0 +1,17 @@
+.idea/
+.vscode/
+
+node_modules/
+dist/
+build/
+target/
+
+.env
+.env.local
+*.log
+*.tsbuildinfo
+
+postgres-data/
+
+# Local/reference furniture source images. Keep public commits on cleaned or licensed assets.
+frontend/public/assets/furniture/habbo_hotel_style_*.png
