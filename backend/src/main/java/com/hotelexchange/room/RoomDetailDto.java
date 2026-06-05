@@ -1,20 +1,27 @@
 package com.hotelexchange.room;
 
-import com.hotelexchange.realtime.GridPosition;
+import com.hotelexchange.furniture.BlockedTileDto;
+import com.hotelexchange.furniture.RoomFurnitureDto;
 import java.util.List;
 
-public record RoomResponse(
+public record RoomDetailDto(
         Long id,
         String name,
         int width,
         int height,
         int spawnX,
         int spawnY,
-        List<GridPosition> blockedTiles,
+        List<BlockedTileDto> blockedTiles,
+        List<RoomFurnitureDto> furniture,
         int onlineCount
 ) {
-    public static RoomResponse from(RoomEntity room, List<GridPosition> blockedTiles, int onlineCount) {
-        return new RoomResponse(
+    public static RoomDetailDto from(
+            RoomEntity room,
+            List<BlockedTileDto> blockedTiles,
+            List<RoomFurnitureDto> furniture,
+            int onlineCount
+    ) {
+        return new RoomDetailDto(
                 room.getId(),
                 room.getName(),
                 room.getWidth(),
@@ -22,6 +29,7 @@ public record RoomResponse(
                 room.getSpawnX(),
                 room.getSpawnY(),
                 blockedTiles,
+                furniture,
                 onlineCount
         );
     }

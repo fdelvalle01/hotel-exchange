@@ -1,4 +1,4 @@
-import type { GridPosition, Room } from '../../types/api.types';
+import type { GridPosition, Room, RoomFurniture } from '../../types/api.types';
 import {
   FURNITURE_CATALOG_BY_ID,
   type FurnitureFallbackRenderType,
@@ -11,6 +11,9 @@ export interface StaticFurnitureInstance {
   x: number;
   y: number;
   rotation: FurnitureRotation;
+  width?: number;
+  height?: number;
+  blocksMovement?: boolean;
   customDepthOffset?: number;
 }
 
@@ -71,6 +74,10 @@ export const MAIN_LOBBY_FURNITURE: StaticFurnitureInstance[] = [
 ];
 
 export function mainLobbyFurnitureInstances(room: Room) {
+  if (room.furniture && room.furniture.length > 0) {
+    return room.furniture.map(roomFurnitureToStaticInstance);
+  }
+
   return isMainLobby(room) ? MAIN_LOBBY_FURNITURE : [];
 }
 
@@ -101,8 +108,8 @@ export function fallbackFurnitureForInstance(instance: StaticFurnitureInstance):
     id: instance.id,
     x: instance.x,
     y: instance.y,
-    width: catalogItem.width,
-    height: catalogItem.height,
+    width: instance.width ?? catalogItem.width,
+    height: instance.height ?? catalogItem.height,
     blockingTiles: blockingTilesForInstance(instance),
     renderType: catalogItem.fallbackRenderType,
   };
@@ -110,11 +117,17 @@ export function fallbackFurnitureForInstance(instance: StaticFurnitureInstance):
 
 function blockingTilesForInstance(instance: StaticFurnitureInstance) {
   const catalogItem = FURNITURE_CATALOG_BY_ID.get(instance.catalogId);
-  if (!catalogItem?.blocksMovement) {
+  const blocksMovement = instance.blocksMovement ?? catalogItem?.blocksMovement ?? false;
+  if (!blocksMovement) {
     return [];
   }
 
-  return rectangleTiles(instance.x, instance.y, catalogItem.width, catalogItem.height);
+  return rectangleTiles(
+    instance.x,
+    instance.y,
+    instance.width ?? catalogItem?.width ?? 1,
+    instance.height ?? catalogItem?.height ?? 1,
+  );
 }
 
 function rectangleTiles(x: number, y: number, width: number, height: number) {
@@ -136,4 +149,25 @@ function isInsideRoom(position: GridPosition, room: Room) {
 
 function isMainLobby(room: Room) {
   return room.id === MAIN_LOBBY_ROOM_ID || room.name.toLowerCase() === 'main lobby';
+}
+
+function roomFurnitureToStaticInstance(furniture: RoomFurniture): StaticFurnitureInstance {
+  return {
+    id: `room-furniture-${furniture.id}`,
+    catalogId: furniture.catalogCode,
+    x: furniture.x,
+    y: furniture.y,
+    rotation: normalizeRotation(furniture.rotation),
+    width: furniture.width,
+    height: furniture.height,
+    blocksMovement: furniture.blocksMovement,
+  };
+}
+
+function normalizeRotation(rotation: string): FurnitureRotation {
+  const normalized = rotation.toUpperCase();
+  if (normalized === 'NE' || normalized === 'NW' || normalized === 'SE' || normalized === 'SW') {
+    return normalized;
+  }
+  return 'SE';
 }

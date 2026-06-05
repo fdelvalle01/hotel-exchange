@@ -1,5 +1,164 @@
 # Hotel Exchange AI Memory
 
+## 2026-06-05 18:13:04 -04:00
+
+### Change Summary
+
+Implemented FASE 4A `Backend Persistent Furniture`. Main Lobby furniture is now seeded in PostgreSQL and returned by `GET /api/rooms/{roomId}`. Backend movement validation now rejects destinations blocked by persisted furniture.
+
+### Files Created Or Modified
+
+- `backend/src/main/resources/db/migration/V4__persistent_furniture.sql`
+- `backend/src/main/java/com/hotelexchange/furniture/FurnitureCatalogEntity.java`
+- `backend/src/main/java/com/hotelexchange/furniture/RoomFurnitureEntity.java`
+- `backend/src/main/java/com/hotelexchange/furniture/FurnitureCatalogRepository.java`
+- `backend/src/main/java/com/hotelexchange/furniture/RoomFurnitureRepository.java`
+- `backend/src/main/java/com/hotelexchange/furniture/FurnitureCatalogItemDto.java`
+- `backend/src/main/java/com/hotelexchange/furniture/RoomFurnitureDto.java`
+- `backend/src/main/java/com/hotelexchange/furniture/BlockedTileDto.java`
+- `backend/src/main/java/com/hotelexchange/furniture/RoomFurnitureService.java`
+- `backend/src/main/java/com/hotelexchange/room/RoomDetailDto.java`
+- `backend/src/main/java/com/hotelexchange/room/RoomController.java`
+- `backend/src/main/java/com/hotelexchange/room/RoomLayoutService.java`
+- `backend/src/test/java/com/hotelexchange/realtime/RoomStateServiceTest.java`
+- `frontend/src/types/api.types.ts`
+- `frontend/src/game/data/mainLobbyFurniture.ts`
+- `README.md`
+- `docs/ROOM_FURNITURE_ARCHITECTURE.md`
+- `docs/AI_MEMORY.md`
+
+### Migration
+
+- Added `furniture_catalog` with:
+  - code/name/type
+  - sprite key/path
+  - width/height
+  - movement and interaction flags
+  - default z
+  - created/updated timestamps
+- Added `room_furniture` with:
+  - room reference
+  - catalog item reference
+  - nullable owner user reference
+  - x/y/z
+  - rotation
+  - JSON-like state text
+  - created/updated timestamps
+- Seeded current Main Lobby furniture:
+  - `green_leather_sofa` at `2,7`
+  - `red_executive_chair` at `7,5`
+  - `dark_wood_coffee_table` at `5,6`
+- Removed legacy `phase_3_layout` blockers for room `1` so backend blockers come from persistent furniture instead of the old drawn reception layout.
+
+### Backend Behavior
+
+- `RoomFurnitureService` loads room furniture, maps DTOs, and calculates blocked tiles from furniture footprint.
+- `RoomLayoutService` now combines legacy `room_blocked_tiles` with furniture-derived blocked tiles.
+- `RoomDetailDto` includes:
+  - `spawnX`
+  - `spawnY`
+  - `blockedTiles`
+  - `furniture`
+- `RoomStateService` continues using `RoomLayoutService.blockedTileSet(...)`, so WebSocket movement now rejects furniture tiles.
+- Movement onto furniture returns a clearer error: `Destination tile is blocked by furniture`.
+
+### Frontend Behavior
+
+- `Room` API type now supports optional `furniture`.
+- `mainLobbyFurniture.ts` maps API `RoomFurnitureDto` to the existing Phaser furniture renderer.
+- If the backend returns no furniture, the local static Main Lobby furniture fallback remains active.
+- Backend `blockedTiles` remain authoritative; frontend local blockers are only fallback/UX support.
+
+### Boundaries Kept
+
+- No inventory implemented.
+- No marketplace implemented.
+- No furniture placement/move/remove UI implemented.
+- No login/lobby changes beyond README documentation.
+- No Kepler code, assets, protocol, or names copied.
+
+### Validation
+
+- `mvn test` passed in `backend/`.
+- `npm run build` passed in `frontend/`.
+- Vite still reports the expected large Phaser bundle warning.
+
+### Pending Technical Work
+
+- Manual smoke test with `trader/trader` and `broker/broker`.
+- Add dedicated furniture catalog REST endpoint if needed.
+- Add server-side room edit permissions before furniture placement/move/remove APIs.
+- Add inventory in a future phase.
+- Add realtime furniture mutation events in a future phase:
+  - `ROOM_FURNITURE_ADDED`
+  - `ROOM_FURNITURE_MOVED`
+  - `ROOM_FURNITURE_REMOVED`
+  - `ROOM_FURNITURE_STATE_CHANGED`
+  - `ROOM_BLOCKED_TILES_UPDATED`
+
+## 2026-06-05 17:57:55 -04:00
+
+### Change Summary
+
+Created `docs/ROOM_FURNITURE_ARCHITECTURE.md` to define the future backend-owned room/furniture architecture for Hotel Exchange.
+
+### Kepler Reference Boundary
+
+- The local `D:\MakingGames\Kepler` repository was reviewed only as conceptual architecture reference.
+- No Kepler source code was copied.
+- No Kepler assets were copied.
+- No Kepler/Habbo protocol, packet names, or packet formats were implemented.
+- No proprietary/internal names were adopted for Hotel Exchange domain models or events.
+- Hotel Exchange remains an original React + Phaser + Spring Boot + WebSocket + PostgreSQL project with exchange/trading educational theme.
+
+### Concepts Observed Conceptually
+
+- Separation between room metadata, room model, runtime tile mapping, room users, item definitions, placed item instances, catalog, inventory, pathfinding, and room rights.
+- Furniture footprint affects multiple tiles depending on dimensions and rotation.
+- Walkability depends on room bounds, base tile state, placed objects, active entities, object state, height, and stacking rules.
+- Inventory should be separate from furniture placed in a room.
+- Room changes should be persisted first, then broadcast to connected users.
+
+### Architecture Decisions For Hotel Exchange
+
+- Move from static frontend furniture to backend-persisted `furniture_catalog` and `room_furniture` in future phases.
+- Keep `furnitureSpriteRenderer.ts` reusable and let Phaser render DTO-driven room furniture.
+- Keep backend authoritative for placement validation, ownership/permissions, blocked tile calculation, and movement validation.
+- Use Hotel Exchange owned events:
+  - `ROOM_FURNITURE_ADDED`
+  - `ROOM_FURNITURE_MOVED`
+  - `ROOM_FURNITURE_REMOVED`
+  - `ROOM_FURNITURE_STATE_CHANGED`
+  - `ROOM_BLOCKED_TILES_UPDATED`
+- Plan future entities:
+  - `RoomEntity`
+  - `FurnitureCatalogEntity`
+  - `RoomFurnitureEntity`
+  - `UserInventoryEntity`
+
+### Files Created Or Modified
+
+- `README.md`
+- `docs/ROOM_FURNITURE_ARCHITECTURE.md`
+- `docs/AI_MEMORY.md`
+
+### Validation
+
+- Documentation-only change.
+- No backend or frontend implementation was changed.
+- Build/test not run because no executable code changed.
+
+### Pending Technical Work
+
+- Implement the proposed architecture incrementally in future phases:
+  - backend furniture catalog
+  - persistent room furniture
+  - backend blocked tile calculation
+  - realtime furniture WebSocket events
+  - room permissions
+  - future inventory
+  - future height/stacking rules
+
 ## 2026-06-05 17:46:22 -04:00
 
 ### Change Summary

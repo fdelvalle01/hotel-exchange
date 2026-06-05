@@ -12,7 +12,25 @@ export interface Room {
   spawnX: number;
   spawnY: number;
   blockedTiles: GridPosition[];
+  furniture?: RoomFurniture[];
   onlineCount: number;
+}
+
+export interface RoomFurniture {
+  id: number;
+  catalogCode: string;
+  name: string;
+  spriteKey: string;
+  spritePath: string;
+  x: number;
+  y: number;
+  z: number;
+  rotation: string;
+  width: number;
+  height: number;
+  blocksMovement: boolean;
+  interactionType: string;
+  state: Record<string, unknown> | null;
 }
 
 export interface AuthResponse {

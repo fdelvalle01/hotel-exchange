@@ -1,6 +1,6 @@
 # Hotel Exchange
 
-Hotel Exchange is a modern Habbo-like web game built from scratch with a clean monorepo structure. The current build includes login, lobby, an isometric Phaser room, multiplayer presence, persisted avatar positions, realtime tile-by-tile movement, blocked room tiles, chat bubbles, REST APIs, WebSocket room events, PostgreSQL, and Docker Compose.
+Hotel Exchange is a modern Habbo-like web game built from scratch with a clean monorepo structure. The current build includes login, lobby, an isometric Phaser room, multiplayer presence, persisted avatar positions, realtime tile-by-tile movement, backend-calculated blocked room tiles, persistent room furniture, chat bubbles, REST APIs, WebSocket room events, PostgreSQL, and Docker Compose.
 
 ## Stack
 
@@ -24,18 +24,23 @@ hotel-exchange/
   README.md
 ```
 
+## Architecture Notes
+
+- [Room And Furniture Architecture](docs/ROOM_FURNITURE_ARCHITECTURE.md)
+
 ## Asset Policy
 
-Furniture sprites are loaded from `frontend/public/assets/furniture/` and referenced by `frontend/src/game/data/furnitureCatalog.ts`.
+Furniture sprites are loaded from `frontend/public/assets/furniture/`. Persistent furniture definitions are seeded in PostgreSQL through Flyway, while `frontend/src/game/data/furnitureCatalog.ts` currently keeps render metadata and fallback behavior for Phaser.
 
 Do not commit copyrighted Habbo/Sulake assets or third-party fan archive assets unless you have explicit redistribution rights. Temporary reference sprites may be tested locally for private prototyping, but public repositories, demos, and portfolio builds should use original Hotel Exchange art or properly licensed assets.
 
 To add an owned/licensed furniture PNG:
 
 1. Place the PNG in `frontend/public/assets/furniture/`.
-2. Add or update its entry in `frontend/src/game/data/furnitureCatalog.ts`.
-3. Add a static room instance in `frontend/src/game/data/mainLobbyFurniture.ts`.
-4. Keep `width`, `height`, `originX`, `originY`, and `depthOffset` aligned with the sprite's isometric footprint.
+2. Add or update its persistent catalog seed in a Flyway migration.
+3. Add or update its render metadata in `frontend/src/game/data/furnitureCatalog.ts`.
+4. Add a `room_furniture` row through migration or future editing API.
+5. Keep `width`, `height`, `originX`, `originY`, and `depthOffset` aligned with the sprite's isometric footprint.
 
 If a PNG is missing, the room falls back to Phaser-drawn placeholder furniture instead of crashing.
 
@@ -154,11 +159,32 @@ Room detail includes layout fields:
 
 ```json
 {
+  "id": 1,
+  "name": "Main Lobby",
   "width": 12,
   "height": 12,
   "spawnX": 1,
   "spawnY": 1,
-  "blockedTiles": [{ "x": 5, "y": 5 }]
+  "blockedTiles": [{ "x": 7, "y": 5 }],
+  "furniture": [
+    {
+      "id": 2,
+      "catalogCode": "red_executive_chair",
+      "name": "Red Executive Chair",
+      "spriteKey": "furniture_red_executive_chair",
+      "spritePath": "/assets/furniture/red_executive_chair.png",
+      "x": 7,
+      "y": 5,
+      "z": 0,
+      "rotation": "SE",
+      "width": 1,
+      "height": 1,
+      "blocksMovement": true,
+      "interactionType": "SEAT",
+      "state": {}
+    }
+  ],
+  "onlineCount": 2
 }
 ```
 
@@ -182,20 +208,21 @@ Server validation:
 - JWT is required during WebSocket connection.
 - `roomId` must exist.
 - Movement coordinates must remain inside the room grid.
-- Movement destination must be walkable and not blocked.
+- Movement destination must be walkable and not blocked by room layout or persistent furniture.
+- Furniture blocked tiles are recalculated by the backend from `room_furniture`; the frontend does not decide authoritative blockers.
 - Chat messages must not be empty.
 - Chat messages are limited by `CHAT_MAX_LENGTH`.
 - Payload size is limited by `WS_MAX_PAYLOAD_BYTES`.
 
 ## Current Result
 
-With Docker Compose running, you can log in as `trader/trader` and `broker/broker` in two browser sessions, enter `Main Lobby`, see both avatars, walk tile by tile in realtime, avoid blocked tiles, send chat messages, see temporary chat bubbles, and return to the last saved room position after reconnecting.
+With Docker Compose running, you can log in as `trader/trader` and `broker/broker` in two browser sessions, enter `Main Lobby`, see backend-persisted furniture, see both avatars, walk tile by tile in realtime, avoid blocked furniture tiles, send chat messages, see temporary chat bubbles, and return to the last saved room position after reconnecting.
 
 ## Roadmap
 
 - Phase 2: Durable multiplayer positions, room session persistence, stronger room state snapshots. Completed basic version.
 - Phase 3: Habbo-style base room gameplay with pathfinding, blocked tiles, layered rendering, walking avatars, and improved bubbles. Completed basic version.
-- Phase 4: Inventory foundations, item ownership, furniture placement, and room layout editing.
+- Phase 4: Backend persistent furniture foundation started. Inventory, item ownership, furniture editing UI, and room layout editing are still future work.
 - Phase 5: Marketplace/economy.
 - Phase 6: Keycloak integration and production identity migration.
 - Phase 7: Moderation, audit logs, observability, and horizontal WebSocket scaling.
