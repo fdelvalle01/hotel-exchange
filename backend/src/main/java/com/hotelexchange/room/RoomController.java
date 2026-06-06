@@ -17,17 +17,20 @@ public class RoomController {
     private final RoomLayoutService roomLayoutService;
     private final RoomFurnitureService roomFurnitureService;
     private final RoomPresenceRegistry presenceRegistry;
+    private final RoomModelService roomModelService;
 
     public RoomController(
             RoomRepository roomRepository,
             RoomLayoutService roomLayoutService,
             RoomFurnitureService roomFurnitureService,
-            RoomPresenceRegistry presenceRegistry
+            RoomPresenceRegistry presenceRegistry,
+            RoomModelService roomModelService
     ) {
         this.roomRepository = roomRepository;
         this.roomLayoutService = roomLayoutService;
         this.roomFurnitureService = roomFurnitureService;
         this.presenceRegistry = presenceRegistry;
+        this.roomModelService = roomModelService;
     }
 
     @GetMapping
@@ -45,8 +48,10 @@ public class RoomController {
     }
 
     private RoomDetailDto toResponse(RoomEntity room) {
+        RoomModelEntity roomModel = roomModelService.getModelForRoom(room).orElse(null);
         return RoomDetailDto.from(
                 room,
+                roomModel,
                 roomLayoutService.blockedTileDtos(room),
                 roomFurnitureService.furnitureForRoom(room),
                 presenceRegistry.onlineCount(room.getId())

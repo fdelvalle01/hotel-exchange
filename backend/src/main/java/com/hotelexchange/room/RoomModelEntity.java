@@ -11,12 +11,15 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 @Entity
-@Table(name = "rooms")
-public class RoomEntity {
+@Table(name = "room_models")
+public class RoomModelEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(nullable = false, length = 80, unique = true)
+    private String code;
 
     @Column(nullable = false, length = 120)
     private String name;
@@ -27,26 +30,26 @@ public class RoomEntity {
     @Column(nullable = false)
     private int height;
 
+    @Column(name = "floor_map", nullable = false, columnDefinition = "TEXT")
+    private String floorMap;
+
+    @Column(name = "wall_mode", nullable = false, length = 40)
+    private String wallMode;
+
+    @Column(name = "wall_height", nullable = false)
+    private int wallHeight;
+
     @Column(name = "spawn_x", nullable = false)
     private int spawnX;
 
     @Column(name = "spawn_y", nullable = false)
     private int spawnY;
 
-    @Column(name = "model_code", length = 80)
-    private String modelCode;
+    @Column(name = "spawn_direction", nullable = false, length = 8)
+    private String spawnDirection;
 
-    @Column(nullable = false, length = 255)
-    private String description;
-
-    @Column(nullable = false, length = 20)
-    private String status;
-
-    @Column(name = "floor_theme", nullable = false, length = 40)
-    private String floorTheme;
-
-    @Column(name = "wall_theme", nullable = false, length = 40)
-    private String wallTheme;
+    @Column(nullable = false, length = 40)
+    private String theme;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -67,16 +70,17 @@ public class RoomEntity {
     }
 
     public Long getId() { return id; }
+    public String getCode() { return code; }
     public String getName() { return name; }
     public int getWidth() { return width; }
     public int getHeight() { return height; }
+    public String getFloorMap() { return floorMap; }
+    public String getWallMode() { return wallMode; }
+    public int getWallHeight() { return wallHeight; }
     public int getSpawnX() { return spawnX; }
     public int getSpawnY() { return spawnY; }
-    public String getModelCode() { return modelCode; }
-    public String getDescription() { return description; }
-    public String getStatus() { return status; }
-    public String getFloorTheme() { return floorTheme; }
-    public String getWallTheme() { return wallTheme; }
+    public String getSpawnDirection() { return spawnDirection; }
+    public String getTheme() { return theme; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

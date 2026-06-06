@@ -7,7 +7,7 @@ import type {
   UserMovedPayload,
 } from '../../types/api.types';
 import { Avatar } from '../entities/Avatar';
-import type { RoomSceneOptions, ScreenPoint } from '../types/game.types';
+import type { RoomCorners, RoomSceneOptions, ScreenPoint } from '../types/game.types';
 import {
   getTileCenter,
   isoToGrid,
@@ -25,18 +25,23 @@ import {
   preloadFurnitureSprites,
   renderFurnitureSprites,
 } from '../rendering/furnitureSpriteRenderer';
+import {
+  decodeFloorMap,
+  existingTileKeys,
+  walkableTileKeys,
+  type RoomTileView,
+} from '../data/floorMapDecoder';
+import {
+  calculateCorners,
+  renderRoomShell,
+  type RoomShellConfig,
+} from '../rendering/roomShellRenderer';
+import { renderLegacyTradingDecor } from '../rendering/legacyTradingDecorRenderer';
 
 interface TileView {
   object: Phaser.GameObjects.Polygon;
   baseFill: number;
   blocked: boolean;
-}
-
-interface RoomCorners {
-  north: ScreenPoint;
-  east: ScreenPoint;
-  south: ScreenPoint;
-  west: ScreenPoint;
 }
 
 type PendingSceneEvent =
@@ -68,6 +73,11 @@ export class RoomScene extends Phaser.Scene {
   private selectedTileKey: string | null = null;
   private selectedHighlight: Phaser.GameObjects.Polygon | null = null;
   private sceneReady = false;
+
+  // Floor map state — populated from room.model if available
+  private decodedTiles: RoomTileView[] | null = null;
+  private existingTileKeySet: Set<string> | null = null;
+  private walkableTileKeySet: Set<string> | null = null;
 
   constructor(private readonly options: RoomSceneOptions) {
     super('RoomScene');
@@ -176,27 +186,61 @@ export class RoomScene extends Phaser.Scene {
   }
 
   private drawFloor() {
-    this.drawRoomShell();
-    for (let y = 0; y < this.options.room.height; y += 1) {
-      for (let x = 0; x < this.options.room.width; x += 1) {
-        this.createTile({ x, y });
+    const room = this.options.room;
+    const floorMap = room.model?.floorMap;
+
+    if (floorMap) {
+      this.decodedTiles = decodeFloorMap(floorMap, room.width, room.height);
+      this.existingTileKeySet = existingTileKeys(this.decodedTiles);
+      this.walkableTileKeySet = walkableTileKeys(this.decodedTiles);
+    }
+
+    const shell = room.shell;
+    const shellConfig: RoomShellConfig = {
+      wallMode: shell?.wallMode ?? 'STANDARD',
+      // Convert tile units to pixels; fallback 92px matches original hardcoded value
+      wallHeightPx: shell ? shell.wallHeight * TILE_HEIGHT : 92,
+      sideDepthPx: 20,
+    };
+
+    const corners = this.roomCorners();
+    this.drawRoomShellAndDecor(corners, shellConfig);
+
+    if (this.decodedTiles) {
+      for (const tile of this.decodedTiles) {
+        if (tile.exists) {
+          this.createTile({ x: tile.x, y: tile.y }, tile.height);
+        }
+      }
+    } else {
+      for (let y = 0; y < room.height; y += 1) {
+        for (let x = 0; x < room.width; x += 1) {
+          this.createTile({ x, y }, 0);
+        }
       }
     }
-    this.drawRoomTrim();
+
+    this.drawRoomTrim(corners);
     this.drawDecorations();
   }
 
-  private createTile(position: GridPosition) {
+  private createTile(position: GridPosition, tileHeight = 0) {
     const floorLayer = this.floorLayer;
     if (!floorLayer) {
       return;
     }
 
-    const center = getTileCenter(position.x, position.y, this.origin);
+    const rawCenter = getTileCenter(position.x, position.y, this.origin);
+    // Elevated tiles shift up on screen (basic visual; no side faces yet)
+    const center: ScreenPoint = {
+      x: rawCenter.x,
+      y: rawCenter.y - tileHeight * (TILE_HEIGHT * 1.5),
+    };
+
     const tileKey = this.tileKey(position);
     const blocked = this.isBlocked(position);
     const serverBlocked = this.serverBlockedTileKeys.has(tileKey);
-    const fill = this.floorTileFill(position, serverBlocked);
+    const fill = this.floorTileFill(position, serverBlocked, tileHeight);
     const tile = this.add.polygon(
       center.x,
       center.y,
@@ -283,69 +327,22 @@ export class RoomScene extends Phaser.Scene {
     this.sortAvatars();
   }
 
-  private drawRoomShell() {
+  private drawRoomShellAndDecor(corners: RoomCorners, config: RoomShellConfig) {
     const floorLayer = this.floorLayer;
     if (!floorLayer) {
       return;
     }
 
-    const corners = this.roomCorners();
-    const wallHeight = 92;
-    const sideDepth = 20;
-
-    const leftWall = this.drawScenePolygon([
-      corners.north,
-      corners.west,
-      { x: corners.west.x, y: corners.west.y - wallHeight },
-      { x: corners.north.x, y: corners.north.y - wallHeight },
-    ], 0x7a6253, 0.96, 0x241a17, 0.42);
-
-    const rightWall = this.drawScenePolygon([
-      corners.north,
-      corners.east,
-      { x: corners.east.x, y: corners.east.y - wallHeight },
-      { x: corners.north.x, y: corners.north.y - wallHeight },
-    ], 0x8b705d, 0.96, 0x241a17, 0.42);
-
-    const leftBaseboard = this.drawScenePolygon([
-      corners.north,
-      corners.west,
-      { x: corners.west.x, y: corners.west.y - 10 },
-      { x: corners.north.x, y: corners.north.y - 10 },
-    ], 0x3b261f, 0.96);
-
-    const rightBaseboard = this.drawScenePolygon([
-      corners.north,
-      corners.east,
-      { x: corners.east.x, y: corners.east.y - 10 },
-      { x: corners.north.x, y: corners.north.y - 10 },
-    ], 0x4a2f25, 0.96);
-
-    const leftSide = this.drawScenePolygon([
-      corners.west,
-      corners.south,
-      { x: corners.south.x, y: corners.south.y + sideDepth },
-      { x: corners.west.x, y: corners.west.y + sideDepth },
-    ], 0x172723, 1, 0x0b1312, 0.8);
-
-    const rightSide = this.drawScenePolygon([
-      corners.south,
-      corners.east,
-      { x: corners.east.x, y: corners.east.y + sideDepth },
-      { x: corners.south.x, y: corners.south.y + sideDepth },
-    ], 0x1f302b, 1, 0x0b1312, 0.8);
-
-    floorLayer.add([leftWall, rightWall, leftBaseboard, rightBaseboard, leftSide, rightSide]);
-    this.drawTradingWallDecor(corners);
+    renderRoomShell(this, floorLayer, corners, config);
+    renderLegacyTradingDecor(this, floorLayer, corners);
   }
 
-  private drawRoomTrim() {
+  private drawRoomTrim(corners: RoomCorners) {
     const floorLayer = this.floorLayer;
     if (!floorLayer) {
       return;
     }
 
-    const corners = this.roomCorners();
     const trim = this.add.graphics();
     trim.lineStyle(2, 0x101b19, 0.84);
     trim.beginPath();
@@ -364,45 +361,6 @@ export class RoomScene extends Phaser.Scene {
     trim.closePath();
     trim.strokePath();
     floorLayer.add(trim);
-  }
-
-  private drawTradingWallDecor(corners: RoomCorners) {
-    const floorLayer = this.floorLayer;
-    if (!floorLayer) {
-      return;
-    }
-
-    const marketPanel = this.add.container(corners.north.x - 150, corners.north.y + 38);
-    const marketBack = this.add.rectangle(0, 0, 112, 34, 0x151b18, 0.96);
-    marketBack.setStrokeStyle(2, 0x0b0b0b, 1);
-    const marketText = this.add.text(0, -5, 'MARKET OPEN', {
-      color: '#8cff9c',
-      fontFamily: 'Courier New, Lucida Console, monospace',
-      fontSize: '10px',
-      fontStyle: 'bold',
-    });
-    marketText.setOrigin(0.5);
-    const tickerText = this.add.text(0, 9, 'BTC +2.4  SPY +0.8', {
-      color: '#ffd94e',
-      fontFamily: 'Courier New, Lucida Console, monospace',
-      fontSize: '8px',
-    });
-    tickerText.setOrigin(0.5);
-    marketPanel.add([marketBack, marketText, tickerText]);
-
-    const deskPanel = this.add.container(corners.north.x + 142, corners.north.y + 56);
-    const deskBack = this.add.rectangle(0, 0, 118, 30, 0x241a17, 0.96);
-    deskBack.setStrokeStyle(2, 0xd8a23d, 0.58);
-    const deskText = this.add.text(0, 0, 'EXCHANGE DESK', {
-      color: '#fff1cf',
-      fontFamily: 'Courier New, Lucida Console, monospace',
-      fontSize: '10px',
-      fontStyle: 'bold',
-    });
-    deskText.setOrigin(0.5);
-    deskPanel.add([deskBack, deskText]);
-
-    floorLayer.add([marketPanel, deskPanel]);
   }
 
   private upsertAvatar(presenceUser: PresenceUser, movementPath?: GridPosition[]) {
@@ -547,6 +505,10 @@ export class RoomScene extends Phaser.Scene {
   }
 
   private isInsideRoom(position: GridPosition) {
+    if (this.existingTileKeySet) {
+      return this.existingTileKeySet.has(this.tileKey(position));
+    }
+    // Fallback: rectangular bounds
     return position.x >= 0
       && position.y >= 0
       && position.x < this.options.room.width
@@ -554,6 +516,13 @@ export class RoomScene extends Phaser.Scene {
   }
 
   private isBlocked(position: GridPosition) {
+    // Structural non-walkable tiles (b/B in floorMap) are always blocked
+    if (this.walkableTileKeySet) {
+      const key = this.tileKey(position);
+      if (this.existingTileKeySet?.has(key) && !this.walkableTileKeySet.has(key)) {
+        return true;
+      }
+    }
     return this.blockedTileKeys.has(this.tileKey(position));
   }
 
@@ -742,6 +711,9 @@ export class RoomScene extends Phaser.Scene {
     this.bubbleLayer = null;
     this.selectedTileKey = null;
     this.selectedHighlight = null;
+    this.decodedTiles = null;
+    this.existingTileKeySet = null;
+    this.walkableTileKeySet = null;
   }
 
   private samePosition(a: GridPosition, b: GridPosition) {
@@ -752,9 +724,15 @@ export class RoomScene extends Phaser.Scene {
     return `${position.x}:${position.y}`;
   }
 
-  private floorTileFill(position: GridPosition, serverBlocked: boolean) {
+  private floorTileFill(position: GridPosition, serverBlocked: boolean, tileHeight = 0) {
     if (serverBlocked) {
       return BLOCKED_TILE_FILL;
+    }
+
+    if (tileHeight > 0) {
+      // Elevated tiles get a slightly lighter shade
+      const hash = Math.abs((position.x * 17 + position.y * 29 + position.x * position.y * 7) % FLOOR_TILE_COLORS.length);
+      return FLOOR_TILE_COLORS[hash] + 0x111111;
     }
 
     const hash = Math.abs((position.x * 17 + position.y * 29 + position.x * position.y * 7) % FLOOR_TILE_COLORS.length);
@@ -767,41 +745,11 @@ export class RoomScene extends Phaser.Scene {
   }
 
   private roomCorners(): RoomCorners {
-    const width = this.options.room.width;
-    const height = this.options.room.height;
-    const northCenter = getTileCenter(0, 0, this.origin);
-    const eastCenter = getTileCenter(width - 1, 0, this.origin);
-    const southCenter = getTileCenter(width - 1, height - 1, this.origin);
-    const westCenter = getTileCenter(0, height - 1, this.origin);
-
-    return {
-      north: { x: northCenter.x, y: northCenter.y - TILE_HEIGHT / 2 },
-      east: { x: eastCenter.x + TILE_WIDTH / 2, y: eastCenter.y },
-      south: { x: southCenter.x, y: southCenter.y + TILE_HEIGHT / 2 },
-      west: { x: westCenter.x - TILE_WIDTH / 2, y: westCenter.y },
-    };
-  }
-
-  private drawScenePolygon(
-    points: ScreenPoint[],
-    fill: number,
-    alpha: number,
-    stroke?: number,
-    strokeAlpha = 1,
-  ) {
-    const graphic = this.add.graphics();
-    graphic.fillStyle(fill, alpha);
-    graphic.beginPath();
-    graphic.moveTo(points[0].x, points[0].y);
-    for (const point of points.slice(1)) {
-      graphic.lineTo(point.x, point.y);
-    }
-    graphic.closePath();
-    graphic.fillPath();
-    if (stroke !== undefined) {
-      graphic.lineStyle(1, stroke, strokeAlpha);
-      graphic.strokePath();
-    }
-    return graphic;
+    return calculateCorners(
+      this.decodedTiles,
+      this.options.room.width,
+      this.options.room.height,
+      this.origin,
+    );
   }
 }

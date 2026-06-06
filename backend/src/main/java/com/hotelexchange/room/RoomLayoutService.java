@@ -4,9 +4,11 @@ import com.hotelexchange.error.BadRoomEventException;
 import com.hotelexchange.furniture.BlockedTileDto;
 import com.hotelexchange.furniture.RoomFurnitureService;
 import com.hotelexchange.realtime.GridPosition;
+import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -28,13 +30,15 @@ public class RoomLayoutService {
 
     @Transactional(readOnly = true)
     public List<GridPosition> blockedTiles(RoomEntity room) {
-        Set<GridPosition> blockedTiles = new LinkedHashSet<>();
-        blockedTileRepository.findByRoom_Id(room.getId()).stream()
-                .map(tile -> new GridPosition(tile.getX(), tile.getY()))
-                .forEach(blockedTiles::add);
-        blockedTiles.addAll(roomFurnitureService.blockedTileSet(room));
+        Map<GridPosition, String> reasons = new LinkedHashMap<>();
 
-        return blockedTiles.stream()
+        blockedTileRepository.findByRoom_Id(room.getId())
+                .forEach(tile -> reasons.put(new GridPosition(tile.getX(), tile.getY()), "STRUCTURAL"));
+
+        roomFurnitureService.blockedTileSet(room)
+                .forEach(pos -> reasons.putIfAbsent(pos, "FURNITURE"));
+
+        return reasons.keySet().stream()
                 .sorted(Comparator.comparingInt(GridPosition::y).thenComparingInt(GridPosition::x))
                 .toList();
     }
@@ -46,8 +50,18 @@ public class RoomLayoutService {
 
     @Transactional(readOnly = true)
     public List<BlockedTileDto> blockedTileDtos(RoomEntity room) {
-        return blockedTiles(room).stream()
-                .map(BlockedTileDto::from)
+        Map<GridPosition, String> reasons = new LinkedHashMap<>();
+
+        blockedTileRepository.findByRoom_Id(room.getId())
+                .forEach(tile -> reasons.put(new GridPosition(tile.getX(), tile.getY()), "STRUCTURAL"));
+
+        roomFurnitureService.blockedTileSet(room)
+                .forEach(pos -> reasons.putIfAbsent(pos, "FURNITURE"));
+
+        return reasons.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(
+                        Comparator.comparingInt(GridPosition::y).thenComparingInt(GridPosition::x)))
+                .map(e -> new BlockedTileDto(e.getKey().x(), e.getKey().y(), e.getValue()))
                 .toList();
     }
 

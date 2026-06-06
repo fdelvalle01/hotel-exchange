@@ -4,6 +4,34 @@ export interface User {
   displayName: string;
 }
 
+export interface RoomShell {
+  wallMode: string;
+  wallHeight: number;
+  floorTheme: string;
+  wallTheme: string;
+}
+
+export interface RoomModel {
+  id: number;
+  code: string;
+  name: string;
+  width: number;
+  height: number;
+  floorMap: string;
+  wallMode: string;
+  wallHeight: number;
+  spawnX: number;
+  spawnY: number;
+  spawnDirection: string;
+  theme: string;
+}
+
+export interface BlockedTile {
+  x: number;
+  y: number;
+  reason: string;
+}
+
 export interface Room {
   id: number;
   name: string;
@@ -11,7 +39,11 @@ export interface Room {
   height: number;
   spawnX: number;
   spawnY: number;
-  blockedTiles: GridPosition[];
+  spawnDirection?: string;
+  modelCode?: string;
+  shell?: RoomShell;
+  model?: RoomModel;
+  blockedTiles: BlockedTile[];
   furniture?: RoomFurniture[];
   onlineCount: number;
 }

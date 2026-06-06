@@ -5,6 +5,13 @@ export interface ScreenPoint {
   y: number;
 }
 
+export interface RoomCorners {
+  north: ScreenPoint;
+  east: ScreenPoint;
+  south: ScreenPoint;
+  west: ScreenPoint;
+}
+
 export interface RoomSceneOptions {
   room: Room;
   currentUser: User;

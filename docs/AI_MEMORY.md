@@ -1,5 +1,181 @@
 # Hotel Exchange AI Memory
 
+## 2026-06-05 (FASE 4A.3 — Render FloorMap / Walls desde API)
+
+### Change Summary
+
+Implementó FASE 4A.3: el frontend ahora decodifica `room.model.floorMap` desde el backend y usa esos datos para determinar qué tiles renderizar y cómo configurar las paredes. Si `room.model` no existe, el fallback rectangular anterior sigue funcionando. La Main Lobby (12×12 todos `0`) se ve visualmente igual a antes, pero ahora viene data-driven.
+
+### Archivos Creados
+
+- `frontend/src/game/data/floorMapDecoder.ts` — decoder puro: `decodeFloorMap`, `existingTileKeys`, `walkableTileKeys`, `structuralBlockedTileKeys`, `tileExists`, `tileIsWalkable`. Caracteres: `x/X`=void, `0`=plano, `1-9`=elevado, `b/B`=bloqueado estructural. Fallback rectangular si dimensiones no calzan.
+- `frontend/src/game/rendering/roomShellRenderer.ts` — `renderRoomShell` (wallMode STANDARD/OPEN, wallHeightPx, sideDepthPx) + `calculateCorners` (bounding box de tiles existentes en lugar de width-1/height-1).
+- `frontend/src/game/rendering/legacyTradingDecorRenderer.ts` — `renderLegacyTradingDecor` extrae los paneles MARKET OPEN / EXCHANGE DESK de `RoomScene` para aislar código legacy.
+
+### Archivos Modificados
+
+- `frontend/src/game/types/game.types.ts` — exporta `RoomCorners` (antes era interfaz privada de `RoomScene`).
+- `frontend/src/game/scenes/RoomScene.ts` — refactorizado:
+  - Nuevos campos: `decodedTiles`, `existingTileKeySet`, `walkableTileKeySet`
+  - `drawFloor()` decodifica floorMap si disponible, itera solo tiles `exists=true`
+  - `drawRoomShellAndDecor()` usa `renderRoomShell` + `renderLegacyTradingDecor`
+  - `drawRoomTrim()` recibe corners como parámetro
+  - `roomCorners()` delega a `calculateCorners()` del shell renderer
+  - `isInsideRoom()` verifica `existingTileKeySet` si hay floorMap, fallback rectangular si no
+  - `isBlocked()` verifica structural non-walkable tiles del floorMap además de `blockedTileKeys`
+  - `createTile()` acepta `tileHeight`; tiles elevados tienen Y offset visual + color levemente diferente
+  - `handleShutdown()` limpia nuevos campos
+  - Eliminado: `drawRoomShell()` monolítico, `drawTradingWallDecor()`, `drawScenePolygon()`, interfaz privada `RoomCorners`
+
+### Resultado de Build
+
+```
+npm run build: ✓ 1607 modules, built in 11.44s (sin errores TypeScript)
+```
+
+### Decisiones de Diseño
+
+- `wallHeightPx` se calcula como `shell.wallHeight * TILE_HEIGHT` (3 × 32 = 96px vs. 92px hardcodeado previo). Diferencia visual de 4px, imperceptible.
+- `calculateCorners` usa bounding box de tiles existentes, no `width-1/height-1`. Para la sala 12×12 flat el resultado es idéntico.
+- `legacyTradingDecorRenderer` es explícitamente legacy: aislado para poder reemplazarlo por furniture de pared en FASE 4A.5 sin tocar `RoomScene` ni `roomShellRenderer`.
+- El fallback a iteración rectangular `width × height` permanece activo si `room.model` o `room.model.floorMap` es `null`/`undefined`. Backward compatible.
+- `tileHeight > 0` tiles muestran un Y offset (`-height × TILE_HEIGHT × 1.5`) y color +0x111111. No hay side faces todavía (planeado para FASE posterior).
+
+### Smoke Test Recomendado
+
+1. `docker compose up`
+2. Login `trader/trader`, entrar Main Lobby
+3. Confirmar sala renderiza igual a antes (12×12, colores verde oscuro, zona desk)
+4. Confirmar furniture (sofa, silla, mesa)
+5. Confirmar movimiento tile-by-tile
+6. Confirmar chat bubbles
+7. Login `broker/broker` en otro navegador → multiplayer OK
+8. Consola sin errores rojos
+
+### Próximo Paso Recomendado: FASE 4A.4
+
+Movement Validation con Structural Blockers (backend):
+1. `RoomLayoutService.isExistingTile(model, position)` usando `RoomModelService.existingTileSet`
+2. `validateWalkableDestination` verifica existencia del tile antes de blocked check
+3. `BlockedTileDto` con campo `reason` ya implementado en FASE 4A.2
+4. Tests: rechazo de movimiento a tile `x` (void), tile `b` (structural)
+5. Frontend: click en void tile no llega al backend (ya funciona via `isInsideRoom`)
+
+---
+
+## 2026-06-05 (FASE 4A.2 — RoomModel Backend)
+
+### Change Summary
+
+Implementó FASE 4A.2: Introducir RoomModel Backend. Se creó la tabla `room_models` con su entidad, servicio, DTOs y tests. La Main Lobby ahora apunta al modelo `exchange_lobby_01`. `GET /api/rooms/1` devuelve `modelCode`, `spawnDirection`, `shell` y `model`. El frontend no cambió visualmente — solo se actualizaron tipos TypeScript.
+
+### Archivos Creados
+
+- `backend/src/main/resources/db/migration/V5__room_models.sql` — tabla `room_models`, columnas nuevas en `rooms`, seed `exchange_lobby_01`, FK `model_code`
+- `backend/.../room/RoomModelEntity.java` — entidad JPA para `room_models`
+- `backend/.../room/RoomModelRepository.java` — `findByCode(String)`
+- `backend/.../room/RoomTile.java` — record value: x, y, exists, walkable, height
+- `backend/.../room/RoomModelDto.java` — DTO de respuesta del modelo
+- `backend/.../room/RoomShellDto.java` — DTO: wallMode, wallHeight, floorTheme, wallTheme
+- `backend/.../room/RoomModelService.java` — `decodeFloorMap`, `validateModel`, `existingTileSet`, `walkableTileSet`, `structuralBlockedTileSet`
+- `backend/src/test/.../room/RoomModelServiceTest.java` — 20 tests: decode válido/inválido, caracteres x/b/0/2, spawn inválido, sets
+
+### Archivos Modificados
+
+- `backend/.../room/RoomEntity.java` — nuevos campos: `modelCode`, `description`, `status`, `floorTheme`, `wallTheme`, `updatedAt`
+- `backend/.../furniture/BlockedTileDto.java` — nuevo campo `reason` (`STRUCTURAL` / `FURNITURE`)
+- `backend/.../room/RoomLayoutService.java` — `blockedTileDtos()` ahora etiqueta cada blocker con su razón; estructurales toman precedencia
+- `backend/.../room/RoomDetailDto.java` — nuevos campos: `spawnDirection`, `modelCode`, `shell`, `model`
+- `backend/.../room/RoomController.java` — inyecta `RoomModelService`, pasa modelo al DTO
+- `frontend/src/types/api.types.ts` — nuevas interfaces `RoomShell`, `RoomModel`, `BlockedTile`; `Room` con campos opcionales nuevos
+
+### Resultado de Tests
+
+```
+Tests run: 27, Failures: 0, Errors: 0, Skipped: 0 — BUILD SUCCESS
+  RoomModelServiceTest:    20 tests
+  RoomStateServiceTest:     4 tests
+  RoomWebSocketHandlerTest: 3 tests
+npm run build: ✓ built in 14.01s (sin errores TypeScript)
+```
+
+### Decisiones de Diseño
+
+- `model_code` nullable en `rooms` para backward compatibility. Main Lobby seed usa `'exchange_lobby_01'`.
+- `BlockedTileDto` conserva `from(GridPosition)` como alias de `furniture()`. No rompe tests existentes.
+- `RoomLayoutService.blockedTileDtos()` duplicado por razones de rendimiento — `blockedTiles()` y `blockedTileSet()` sin cambios para no afectar pathfinding y movement validation.
+- `RoomModelService.InvalidFloorMapException` es inner class pública — sin dependencia en GlobalExceptionHandler por ahora (futura mejora).
+- Caracteres de floorMap: `x`/`X` = void, `0` = plano, `1-9` = altura, `b`/`B` = bloqueado estructural.
+
+### Próximo Paso Recomendado: FASE 4A.3
+
+Render FloorMap / Walls desde API:
+
+1. `floorMapDecoder.ts` — decodifica `floorMap` string en `RoomTile[][]`
+2. `floorMapRenderer.ts` — renderiza solo tiles existentes según floorMap
+3. `roomShellRenderer.ts` — paredes calculadas desde corners de tiles extremos + `RoomShellDto`
+4. `RoomScene.ts` — reemplazar `drawFloor()` y `drawRoomShell()` con nuevos renderers; fallback si `room.model` es null
+
+---
+
+## 2026-06-05 (Gap Analysis Pass)
+
+### Change Summary
+
+Realizó análisis técnico y arquitectónico de Hotel Exchange vs. conceptos de juegos tipo hotel virtual. Se creó `docs/ROOM_MODEL_GAP_ANALYSIS.md`. No se tocó código ejecutable en esta sesión.
+
+### Referencia Kepler
+
+- Kepler (`D:\MakingGames\Kepler`) fue revisado únicamente como referencia conceptual de arquitectura.
+- Se estudiaron los conceptos de `rooms_models` (heightmap), spawn/door position, wallpaper/floor themes, y separación room-vs-model.
+- No se copió código, assets, protocolo, nombres de paquetes ni identificadores propietarios de Kepler.
+- Hotel Exchange sigue siendo un proyecto original: React + Phaser + Spring Boot + WebSocket + PostgreSQL + tema educativo de exchange/trading.
+
+### Hallazgos Principales del Análisis
+
+- `RoomEntity` solo tiene `width`/`height`. No hay floorMap, forma irregular, ni tiles void.
+- Toda la geometría de sala está hardcodeada en `RoomScene.ts` (zona de escritorio, altura de pared 92px, decoraciones de pared, colores base del piso).
+- No existe `spawnDirection`. El avatar siempre aparece mirando al sur por defecto.
+- `isInsideRoom()` en backend y frontend verifica solo bounds rectangulares. Si hubiera tiles vacíos en el mapa, el pathfinding los trataría como caminables.
+- `BlockedTileDto` no diferencia entre bloqueo estructural y bloqueo por furniture.
+- Furniture persistente (FASE 4A) está bien diseñado y es compatible con el modelo propuesto.
+
+### Documento Creado
+
+- `docs/ROOM_MODEL_GAP_ANALYSIS.md`
+
+El documento incluye:
+- A. Resumen ejecutivo: por qué el modelo actual no basta
+- B. Conceptos observados en Kepler (solo conceptual, sin código)
+- C. Estado actual de Hotel Exchange (qué funciona, qué hardcodeado, qué falta)
+- D. Gap analysis: tabla comparativa actual vs. objetivo
+- E. Modelo propuesto: `RoomModel`, `RoomTile`, `RoomShellDto`, `BlockedTileDto` diferenciado
+- F. Formato floorMap propuesto con ejemplos (12x12 flat, forma en L, plataforma)
+- G. Backend roadmap: migraciones V5, servicios, DTOs
+- H. Frontend roadmap: `floorMapDecoder.ts`, `floorMapRenderer.ts`, `roomShellRenderer.ts`
+- I. Movement validation ordenada: exists → structural → furniture → entity
+- J. Riesgos técnicos: profundidad ISO, escalas, paredes tapando avatares, fallback
+- K. Roadmap incremental: FASE 4A.2 → 4A.3 → 4A.4 → 4A.5 → 4B → 4C → 5 → 6
+
+### Próximo Paso Recomendado
+
+Implementar **FASE 4A.2: Introducir RoomModel Backend**:
+
+1. Migración `V5__room_models.sql`.
+2. `RoomModelEntity` + `RoomModelRepository` + `RoomModelDto`.
+3. `RoomModelService.decodedTiles()`.
+4. Agregar `modelCode` nullable en `RoomEntity`.
+5. `GET /api/rooms/{id}` agrega `shell` y `spawnDirection`.
+6. Frontend: solo actualizar tipos en `api.types.ts`, sin cambio de render todavía.
+7. `mvn test` pasa.
+
+### Files Created Or Modified
+
+- `docs/ROOM_MODEL_GAP_ANALYSIS.md`
+- `docs/AI_MEMORY.md`
+
+---
+
 ## 2026-06-05 18:13:04 -04:00
 
 ### Change Summary
