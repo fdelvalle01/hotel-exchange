@@ -42,6 +42,16 @@ public class RoomFurnitureService {
     }
 
     @Transactional(readOnly = true)
+    public Set<GridPosition> blockedTileSetExcluding(RoomEntity room, Long excludeFurnitureId) {
+        Set<GridPosition> blockedTiles = new LinkedHashSet<>();
+        for (RoomFurnitureEntity furniture : roomFurnitureRepository.findByRoom_IdOrderByIdAsc(room.getId())) {
+            if (furniture.getId().equals(excludeFurnitureId)) continue;
+            blockedTiles.addAll(blockedTilesForFurniture(room, furniture));
+        }
+        return Set.copyOf(blockedTiles);
+    }
+
+    @Transactional(readOnly = true)
     public List<BlockedTileDto> blockedTiles(RoomEntity room) {
         return blockedTileSet(room).stream()
                 .sorted(Comparator.comparingInt(GridPosition::y).thenComparingInt(GridPosition::x))

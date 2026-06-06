@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -41,6 +42,12 @@ class RoomFurnitureControllerTest {
 
     @MockBean
     private FurniturePlacementService placementService;
+
+    @MockBean
+    private FurnitureRemovalService removalService;
+
+    @MockBean
+    private FurnitureRotationService rotationService;
 
     @MockBean
     private RoomEventBroadcaster broadcaster;
@@ -110,6 +117,40 @@ class RoomFurnitureControllerTest {
                         .with(authentication(authenticatedUser(7L, "trader")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"catalogCode\":\"chair\",\"x\":2,\"y\":3}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void validRotateReturns200WithFurnitureDto() throws Exception {
+        RoomEntity room = roomEntity(1L);
+        FurnitureCatalogEntity catalog = catalogEntity("chair");
+        RoomFurnitureEntity furnitureEntity = furnitureEntity(99L, 2, 3, catalog);
+        ReflectionTestUtils.setField(furnitureEntity, "rotation", "NE");
+        RoomFurnitureDto furnitureDto = RoomFurnitureDto.from(furnitureEntity, new ObjectMapper().createObjectNode());
+        RotateFurnitureResponse response = new RotateFurnitureResponse(furnitureDto);
+
+        when(roomRepository.findById(1L)).thenReturn(Optional.of(room));
+        when(rotationService.rotateFurniture(eq(7L), eq(room), eq(99L), any())).thenReturn(response);
+
+        mockMvc.perform(patch("/api/rooms/1/furniture/99/rotate")
+                        .with(csrf())
+                        .with(authentication(authenticatedUser(7L, "trader")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rotation\":\"NE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.furniture.id").value(99))
+                .andExpect(jsonPath("$.furniture.rotation").value("NE"));
+    }
+
+    @Test
+    void rotateMissingRoomReturns404() throws Exception {
+        when(roomRepository.findById(999L)).thenReturn(Optional.empty());
+
+        mockMvc.perform(patch("/api/rooms/999/furniture/1/rotate")
+                        .with(csrf())
+                        .with(authentication(authenticatedUser(7L, "trader")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rotation\":\"NE\"}"))
                 .andExpect(status().isNotFound());
     }
 

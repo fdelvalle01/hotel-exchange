@@ -5,7 +5,7 @@ import { Layout } from '../components/Layout';
 import { InventoryPanel } from '../components/inventory/InventoryPanel';
 import { PhaserRoom, PhaserRoomHandle } from '../game/PhaserRoom';
 import { ApiError } from '../services/httpClient';
-import { getRoom, placeFurniture } from '../services/rooms.service';
+import { getRoom, placeFurniture, removeFurniture, rotateFurniture } from '../services/rooms.service';
 import { RoomWebSocketClient } from '../services/wsClient';
 import { useSession } from '../state/session';
 import type {
@@ -13,6 +13,8 @@ import type {
   ChatPayload,
   ConnectionStatus,
   FurnitureAddedPayload,
+  FurnitureRemovedPayload,
+  FurnitureRotatedPayload,
   GridPosition,
   InventoryItem,
   PresencePayload,
@@ -39,7 +41,18 @@ export function RoomPage() {
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [selectedPlacementItem, setSelectedPlacementItem] = useState<InventoryItem | null>(null);
   const [isPlacing, setIsPlacing] = useState(false);
+  const [isRemoving, setIsRemoving] = useState(false);
+  const [isRotating, setIsRotating] = useState(false);
+  const [furnitureMenu, setFurnitureMenu] = useState<{
+    furnitureId: number;
+    catalogCode: string;
+    currentRotation: string;
+    pctX: number;
+    pctY: number;
+  } | null>(null);
+  const [inventoryRefreshKey, setInventoryRefreshKey] = useState(0);
   const addedFurnitureIdsRef = useRef<Set<number>>(new Set());
+  const recentlyRotatedRef = useRef<Map<number, string>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
@@ -150,6 +163,36 @@ export function RoomPage() {
       return;
     }
 
+    if (event.type === 'ROOM_FURNITURE_REMOVED') {
+      const payload = event.payload as FurnitureRemovedPayload;
+      if (payload?.furnitureId) {
+        const { furnitureId } = payload;
+        if (addedFurnitureIdsRef.current.has(furnitureId)) {
+          addedFurnitureIdsRef.current.delete(furnitureId);
+          phaserRoomRef.current?.removeFurnitureInstance(furnitureId);
+        }
+        setFurnitureMenu((prev) => (prev?.furnitureId === furnitureId ? null : prev));
+      }
+      return;
+    }
+
+    if (event.type === 'ROOM_FURNITURE_ROTATED') {
+      const payload = event.payload as FurnitureRotatedPayload;
+      if (payload?.furniture) {
+        const { id, rotation, width, height } = payload.furniture;
+        const recentRotation = recentlyRotatedRef.current.get(id);
+        if (recentRotation === rotation) {
+          recentlyRotatedRef.current.delete(id);
+          return;
+        }
+        phaserRoomRef.current?.rotateFurnitureInstance(id, rotation, width, height);
+        setFurnitureMenu((prev) =>
+          prev?.furnitureId === id ? { ...prev, currentRotation: rotation } : prev,
+        );
+      }
+      return;
+    }
+
     if (event.type === 'ERROR') {
       const payload = event.payload as ChatPayload;
       setError(payload.message);
@@ -232,6 +275,82 @@ export function RoomPage() {
     setSelectedPlacementItem(null);
   }, []);
 
+  const handleFurniturePickUp = useCallback((
+    furnitureId: number,
+    catalogCode: string,
+    currentRotation: string,
+    pctX: number,
+    pctY: number,
+  ) => {
+    setFurnitureMenu({ furnitureId, catalogCode, currentRotation, pctX, pctY });
+  }, []);
+
+  const handlePickUpConfirm = useCallback(async () => {
+    if (!furnitureMenu || !room || !token) return;
+    const { furnitureId } = furnitureMenu;
+    setFurnitureMenu(null);
+    setIsRemoving(true);
+    try {
+      await removeFurniture(room.id, furnitureId, token);
+      if (addedFurnitureIdsRef.current.has(furnitureId)) {
+        addedFurnitureIdsRef.current.delete(furnitureId);
+        phaserRoomRef.current?.removeFurnitureInstance(furnitureId);
+      }
+      setInventoryRefreshKey((k) => k + 1);
+    } catch (exception) {
+      const message = exception instanceof ApiError ? exception.message : 'Could not pick up furniture.';
+      setError(message);
+    } finally {
+      setIsRemoving(false);
+    }
+  }, [furnitureMenu, room, token]);
+
+  const ROTATION_CYCLE = ['SE', 'NE', 'NW', 'SW'] as const;
+  function nextRotation(current: string): string {
+    const idx = ROTATION_CYCLE.indexOf(current.toUpperCase() as typeof ROTATION_CYCLE[number]);
+    return ROTATION_CYCLE[(idx + 1) % 4];
+  }
+
+  const handleRotateConfirm = useCallback(async () => {
+    if (!furnitureMenu || !room || !token) return;
+    const { furnitureId, catalogCode, currentRotation } = furnitureMenu;
+    const rotation = nextRotation(currentRotation);
+
+    if (import.meta.env.VITE_FURNITURE_DEBUG === 'true') {
+      console.log('[furniture] rotate →', {
+        action: 'rotate',
+        url: `/api/rooms/${room.id}/furniture/${furnitureId}/rotate`,
+        method: 'PATCH',
+        roomId: room.id,
+        furnitureId,
+        catalogCode,
+        currentRotation,
+        nextRotation: rotation,
+      });
+    }
+
+    setIsRotating(true);
+    try {
+      const response = await rotateFurniture(room.id, furnitureId, rotation, token);
+      const { id, rotation: newRotation, width, height } = response.furniture;
+      recentlyRotatedRef.current.set(id, newRotation);
+      phaserRoomRef.current?.rotateFurnitureInstance(id, newRotation, width, height);
+      setFurnitureMenu((prev) =>
+        prev?.furnitureId === furnitureId ? { ...prev, currentRotation: newRotation } : prev,
+      );
+    } catch (exception) {
+      console.error('[furniture] rotate failed', exception);
+      const message = exception instanceof ApiError
+        ? exception.message
+        : exception instanceof Error
+          ? exception.message
+          : 'Could not rotate furniture.';
+      setError(message);
+    } finally {
+      setIsRotating(false);
+    }
+  }, [furnitureMenu, room, token]);
+
   function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = chatDraft.trim();
@@ -301,14 +420,16 @@ export function RoomPage() {
           )}
           {inventoryOpen && token && (
             <InventoryPanel
+              key={inventoryRefreshKey}
               onClose={() => setInventoryOpen(false)}
               onPlace={handlePlaceItem}
               token={token}
             />
           )}
-          <div className="game-surface">
+          <div className="game-surface" style={{ position: 'relative' }}>
             <PhaserRoom
               currentUser={user}
+              onFurniturePickUp={handleFurniturePickUp}
               onMoveRequest={handleMoveRequest}
               onPlacementCancel={handleCancelPlacement}
               onPlacementConfirm={handlePlacementConfirm}
@@ -316,6 +437,37 @@ export function RoomPage() {
               ref={phaserRoomRef}
               room={room}
             />
+            {furnitureMenu && !isRemoving && !isRotating && (
+              <div
+                className="furniture-context-menu"
+                style={{
+                  left: `${furnitureMenu.pctX * 100}%`,
+                  top: `${furnitureMenu.pctY * 100}%`,
+                }}
+              >
+                <button
+                  className="furniture-menu-action"
+                  onClick={handleRotateConfirm}
+                  type="button"
+                >
+                  Rotate
+                </button>
+                <button
+                  className="furniture-menu-action"
+                  onClick={handlePickUpConfirm}
+                  type="button"
+                >
+                  Pick up
+                </button>
+                <button
+                  className="furniture-menu-cancel"
+                  onClick={() => setFurnitureMenu(null)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
 
           <aside className="room-sidebar">

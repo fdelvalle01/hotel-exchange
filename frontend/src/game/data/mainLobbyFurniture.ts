@@ -15,6 +15,10 @@ export interface StaticFurnitureInstance {
   height?: number;
   blocksMovement?: boolean;
   customDepthOffset?: number;
+  /** DB primary key — present only for furniture loaded from room_furniture table */
+  dbId?: number;
+  /** User that placed this furniture; null = system decor, undefined = static/legacy */
+  ownerUserId?: number | null;
 }
 
 export interface StaticCarpetDefinition {
@@ -74,11 +78,8 @@ export const MAIN_LOBBY_FURNITURE: StaticFurnitureInstance[] = [
 ];
 
 export function mainLobbyFurnitureInstances(room: Room) {
-  if (room.furniture && room.furniture.length > 0) {
-    return room.furniture.map(roomFurnitureToStaticInstance);
-  }
-
-  return isMainLobby(room) ? MAIN_LOBBY_FURNITURE : [];
+  // Always use server-provided furniture; static fallback is no longer used
+  return (room.furniture ?? []).map(roomFurnitureToStaticInstance);
 }
 
 export function mainLobbyCarpets(room: Room) {
@@ -161,6 +162,8 @@ function roomFurnitureToStaticInstance(furniture: RoomFurniture): StaticFurnitur
     width: furniture.width,
     height: furniture.height,
     blocksMovement: furniture.blocksMovement,
+    dbId: furniture.id,
+    ownerUserId: furniture.ownerUserId ?? null,
   };
 }
 

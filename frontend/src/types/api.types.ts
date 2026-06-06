@@ -63,6 +63,7 @@ export interface RoomFurniture {
   blocksMovement: boolean;
   interactionType: string;
   state: Record<string, unknown> | null;
+  ownerUserId?: number | null;
 }
 
 export interface InventoryItem {
@@ -148,6 +149,8 @@ export type RoomEventType =
   | 'CHAT_MESSAGE'
   | 'PRESENCE_UPDATE'
   | 'ROOM_FURNITURE_ADDED'
+  | 'ROOM_FURNITURE_REMOVED'
+  | 'ROOM_FURNITURE_ROTATED'
   | 'ERROR';
 
 export interface PlaceFurnitureRequest {
@@ -166,6 +169,29 @@ export interface FurnitureAddedPayload {
   furniture: RoomFurniture;
   placedByUserId: number;
   placedByUsername: string;
+}
+
+export interface FurnitureRemovedPayload {
+  furnitureId: number;
+  catalogCode: string;
+  removedByUserId: number;
+  removedByUsername: string;
+}
+
+export interface RemoveFurnitureResponse {
+  removedFurnitureId: number;
+  catalogCode: string;
+  updatedInventoryItem: InventoryItem;
+}
+
+export interface RotateFurnitureResponse {
+  furniture: RoomFurniture;
+}
+
+export interface FurnitureRotatedPayload {
+  furniture: RoomFurniture;
+  rotatedByUserId: number;
+  rotatedByUsername: string;
 }
 
 export interface RoomServerEvent {

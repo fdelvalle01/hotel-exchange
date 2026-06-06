@@ -136,6 +136,10 @@ public class RoomFurnitureEntity {
         return rotation;
     }
 
+    public void setRotation(String rotation) {
+        this.rotation = rotation != null ? rotation.trim().toUpperCase() : "SE";
+    }
+
     public String getState() {
         return state;
     }

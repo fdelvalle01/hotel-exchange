@@ -24,6 +24,7 @@ interface PhaserRoomProps {
   onMoveRequest: (position: GridPosition) => void;
   onPlacementCancel?: () => void;
   onPlacementConfirm?: (item: InventoryItem, x: number, y: number, rotation: string) => void;
+  onFurniturePickUp?: (furnitureId: number, catalogCode: string, currentRotation: string, pctX: number, pctY: number) => void;
 }
 
 interface PendingChatBubble {
@@ -39,10 +40,12 @@ export interface PhaserRoomHandle {
   exitPlacementMode: () => void;
   setPlacementPending: (pending: boolean) => void;
   addFurnitureInstance: (furniture: RoomFurniture) => void;
+  removeFurnitureInstance: (furnitureId: number) => void;
+  rotateFurnitureInstance: (furnitureId: number, newRotation: string, newWidth: number, newHeight: number) => void;
 }
 
 export const PhaserRoom = forwardRef<PhaserRoomHandle, PhaserRoomProps>(function PhaserRoom(
-  { currentUser, onMoveRequest, onPlacementCancel, onPlacementConfirm, presence, room },
+  { currentUser, onFurniturePickUp, onMoveRequest, onPlacementCancel, onPlacementConfirm, presence, room },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -109,6 +112,7 @@ export const PhaserRoom = forwardRef<PhaserRoomHandle, PhaserRoomProps>(function
     const scene = new RoomScene({
       currentUser,
       onMoveRequest,
+      onFurniturePickUp,
       onReady: () => {
         if (sceneRef.current !== scene) {
           return;
@@ -182,6 +186,12 @@ export const PhaserRoom = forwardRef<PhaserRoomHandle, PhaserRoomProps>(function
     },
     addFurnitureInstance(furniture: RoomFurniture) {
       sceneRef.current?.addFurnitureInstance(furniture);
+    },
+    removeFurnitureInstance(furnitureId: number) {
+      sceneRef.current?.removeFurnitureInstance(furnitureId);
+    },
+    rotateFurnitureInstance(furnitureId: number, newRotation: string, newWidth: number, newHeight: number) {
+      sceneRef.current?.rotateFurnitureInstance(furnitureId, newRotation, newWidth, newHeight);
     },
   }), [applyEventWhenReady, onPlacementCancel, onPlacementConfirm, setPresenceWhenReady, showChatBubbleWhenReady]);
 

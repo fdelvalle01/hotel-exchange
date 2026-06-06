@@ -1,5 +1,207 @@
 # Hotel Exchange AI Memory
 
+## 2026-06-06 (Post 4C.4 — Bug fix #2: CORS PATCH + sprite preload)
+
+### Causa raíz de los dos bugs post-4C.4
+
+**Bug 1 — NetworkError al rotar:**
+`SecurityConfig.java` listaba `GET, POST, PUT, DELETE, OPTIONS` pero **omitía PATCH**.  
+El browser hace preflight OPTIONS antes de cada PATCH cross-origin; el backend respondía que PATCH no está permitido → el browser abortaba con NetworkError antes de tocar el endpoint.  
+**Fix:** Agregar `"PATCH"` a `setAllowedMethods`.
+
+**Bug 2 — Furniture recién colocado se ve como box oscuro (fallback renderer):**
+`RoomScene.preload()` solo cargaba texturas del furniture ya en la sala (`this.furnitureInstances`).  
+Con Main Lobby vacía (V11 migration eliminó system decor), `furnitureInstances` = [] → ninguna textura se precargaba.  
+Al entrar placement mode, `this.textures.exists(spriteKey)` = false → ghost sin sprite.  
+Al confirmar placement, `addFurnitureInstance` → `renderFurnitureSprites` → textura faltante → renderiza box fallback.  
+Después de recargar la página el furniture estaba en la API, `preload()` lo cargaba correctamente.  
+**Fix:** Cambiar `preload()` para iterar sobre todo `FURNITURE_CATALOG_BY_ID` en lugar de solo el furniture de la sala.
+
+### Archivos Modificados
+
+**Backend:**
+- **`config/SecurityConfig.java`**: Agregar `"PATCH"` a `configuration.setAllowedMethods(...)`.
+
+**Frontend:**
+- **`game/scenes/RoomScene.ts`**: `preload()` ahora crea instancias dummy para cada entrada del catálogo y llama `preloadFurnitureSprites` con ellas. `preloadFurnitureSprites` ya deduplica por `spriteKey` y `textures.exists(...)`, por lo que no carga nada dos veces.
+- **`services/httpClient.ts`**: `fetch()` ahora está envuelto en try-catch. Si falla por red (CORS, backend caído, abort), lanza `ApiError('Network error: backend unavailable or request blocked', 0, null)` en lugar de propagar `TypeError`. Con `VITE_FURNITURE_DEBUG=true` loguea método, URL y causa original.
+- **`pages/RoomPage.tsx`**: El log debug de rotate ahora incluye `url` y `method` además de los otros campos.
+
+### Invariante crítico
+
+**CORS y PATCH:** Cualquier nuevo endpoint PATCH debe confirmar que `SecurityConfig.allowedMethods` incluye `"PATCH"`. DELETE ya estaba. PUT ya estaba. PATCH faltaba.
+
+### Validaciones
+
+- `mvn test` → 78 tests, BUILD SUCCESS.
+- `npm run build` → ✓ sin errores TypeScript, built in 17.05s.
+
+---
+
+## 2026-06-06 (Post 4C.4 — Error handling fix + Main Lobby cleanup)
+
+### Change Summary
+
+Corrección post FASE 4C.4: mejorar manejo de errores en rotate furniture y limpiar Main Lobby de furniture sistema no deseado.
+
+### Causa raíz del error "Could not rotate furniture."
+
+Había dos fuentes de error silenciado:
+1. **`httpClient.ts`**: Si `JSON.parse(text)` lanzaba (respuesta no-JSON de Spring Boot), el error propagaba como `SyntaxError`, no `ApiError`. El catch de `handleRotateConfirm` tenía solo `exception instanceof ApiError` → fallback genérico.
+2. **Error JS post-REST**: Cualquier error dentro del `try` block después de `await rotateFurniture()` (ej: error Phaser en `rotateFurnitureInstance`) también producía el mensaje genérico.
+
+### Archivos Modificados
+
+**Frontend:**
+- **`services/httpClient.ts`**: `JSON.parse` envuelto en try-catch. Si el body no es JSON válido, `data = null`. El error sigue siendo `ApiError` con `Server error (HTTP ${status})`. Garantiza que errores HTTP siempre llegan como `ApiError`.
+- **`pages/RoomPage.tsx`**:
+  - `handleRotateConfirm`: Agrega `console.error('[furniture] rotate failed', exception)` SIEMPRE (visible en DevTools). Agrega logging `[furniture] rotate →` si `VITE_FURNITURE_DEBUG=true`. Fallback de mensaje ahora también extrae `exception.message` si es `Error` (no solo ApiError).
+- **`game/data/mainLobbyFurniture.ts`**: `mainLobbyFurnitureInstances` ya no usa `MAIN_LOBBY_FURNITURE` como fallback estático. Siempre retorna `(room.furniture ?? []).map(...)`. Sala vacía si API devuelve vacío.
+
+**Backend:**
+- **`furniture/FurnitureRotationService.java`**: Mensajes mejorados: "Cannot rotate system furniture" → "System furniture cannot be rotated". "You do not own this furniture" → "You can only rotate your own furniture". "Rotated footprint hits blocked tile" → "Rotated footprint is structurally blocked at tile (x, y)".
+- **`db/migration/V11__cleanup_main_lobby_default_furniture.sql`**: Elimina `room_furniture` con `owner_user_id IS NULL` para `room_id = 1`. No toca `furniture_catalog` ni assets.
+- **`test/FurnitureRotationServiceTest.java`**: Actualiza assertions de mensajes para coincidir con los nuevos.
+
+### Mensajes de error backend actualizados
+
+| Caso | Mensaje |
+|------|---------|
+| Furniture no encontrado | "Furniture not found in this room" (404) |
+| System furniture | "System furniture cannot be rotated" (422) |
+| Ownership | "You can only rotate your own furniture" (422) |
+| Rotación inválida | "Invalid rotation value: X" (422) |
+| Footprint fuera del room | "Rotated footprint exceeds room at tile (x, y)" (422) |
+| Footprint structurally bloqueado | "Rotated footprint is structurally blocked at tile (x, y)" (422) |
+| Colisión con otro furniture | "Rotated footprint collides with furniture at tile (x, y)" (422) |
+
+### Decisiones de diseño
+
+- **Main Lobby vacía**: Se prefirió dejar la sala sin furniture sistema para que el usuario la construya desde su inventario. Los tres piezas (sofa, mesa, silla) permanecen en `furniture_catalog` para futuros seeds o pruebas.
+- **Static fallback eliminado**: El frontend nunca más cae al `MAIN_LOBBY_FURNITURE` hardcodeado. Si `room.furniture` es vacío, la sala se renderiza vacía.
+- **Debug logging**: `VITE_FURNITURE_DEBUG=true` para logging detallado de rotate. `console.error` siempre para errores de rotate (visible en DevTools sin flag).
+
+### Validaciones
+
+- `mvn test` → 78 tests, BUILD SUCCESS.
+- `npm run build` → sin errores TypeScript, ✓ built in 14.12s.
+
+---
+
+## 2026-06-06 (FASE 4C.4 — Rotate Furniture)
+
+### Change Summary
+
+Implementación completa de Rotate Furniture: el usuario puede rotar su propio furniture colocado a través de un botón "Rotate" en el context menu. Cicla SE→NE→NW→SW→SE. El backend valida ownership, sistema de decor, rotación válida y footprint (tiles existen, son walkables, sin colisión — ignorando self). El frontend actualiza sprites y blockedTiles. WebSocket sincroniza a otros clientes.
+
+### Reglas de negocio
+
+- Solo el owner puede rotar.
+- `owner_user_id IS NULL` = system decor → no rotable.
+- Furniture de otro usuario → 422.
+- Furniture inexistente o de otra room → 404.
+- Rotación inválida → 422.
+- NE/SW swapean width↔height del footprint; SE/NW usan dimensiones originales.
+- Colisión ignora self (validación excluye el furniture siendo rotado).
+- Misma rotación → no-op sin save.
+
+### Archivos Modificados — Backend
+
+- **`realtime/RoomEventType.java`**: Añadido `ROOM_FURNITURE_ROTATED`.
+- **`realtime/FurnitureRotatedPayload.java`**: Record `furniture: RoomFurnitureDto, rotatedByUserId, rotatedByUsername`.
+- **`furniture/RotateFurnitureRequest.java`**: Record `@NotBlank String rotation`.
+- **`furniture/RotateFurnitureResponse.java`**: Record `furniture: RoomFurnitureDto`.
+- **`furniture/RoomFurnitureEntity.java`**: Añadido `setRotation(String rotation)`.
+- **`furniture/RoomFurnitureService.java`**: Añadido `blockedTileSetExcluding(room, excludeFurnitureId)`.
+- **`furniture/FurnitureRotationService.java`**: Nuevo servicio `@Transactional`. Valida: furniture en esa room (404), owner != null (422), owner == userId (422), rotación válida (422), footprint con nueva rotación no excede room ni colisiona. Mismo rotation → no-op sin save.
+- **`furniture/RoomFurnitureController.java`**: `PATCH /api/rooms/{roomId}/furniture/{roomFurnitureId}/rotate`. Inyecta `FurnitureRotationService`. Broadcast `ROOM_FURNITURE_ROTATED` post-commit.
+- **`test/RoomFurnitureControllerTest.java`**: `@MockBean FurnitureRotationService`. 2 tests: PATCH válido (200), PATCH missing room (404).
+
+### Archivos Modificados — Frontend
+
+- **`types/api.types.ts`**: `ROOM_FURNITURE_ROTATED` en `RoomEventType`. Interfaces `RotateFurnitureResponse`, `FurnitureRotatedPayload`.
+- **`services/rooms.service.ts`**: `rotateFurniture(roomId, roomFurnitureId, rotation, token)` → `PATCH`.
+- **`game/types/game.types.ts`**: `onFurniturePickUp` añade `currentRotation: string` antes de pctX/pctY.
+- **`game/scenes/RoomScene.ts`**: `handlePointerDown` pasa `rotation` al callback. `rotateFurnitureInstance(furnitureId, newRotation, newWidth, newHeight)` — actualiza blocked tiles, destruye/re-renderiza sprites.
+- **`game/PhaserRoom.tsx`**: Actualiza firma de `onFurniturePickUp`. Handle expone `rotateFurnitureInstance`.
+- **`pages/RoomPage.tsx`**: `furnitureMenu` añade `currentRotation`. `isRotating` state. `recentlyRotatedRef: Map<number, string>` para dedupe REST→WS. `handleRotateConfirm` (cicla SE→NE→NW→SW→SE). WS handler `ROOM_FURNITURE_ROTATED`. Botón "Rotate" en context menu.
+
+### Tests
+
+- **`FurnitureRotationServiceTest.java`**: 8 tests: owner rota, same rotation no-op, otro user rechazado, system decor rechazado, not found, rotación inválida, footprint excede room, colisión con otro furniture.
+- `mvn test` → 78 tests, BUILD SUCCESS.
+- `npm run build` → sin errores TypeScript, ✓ built in 18.49s.
+
+### Próximos pasos sugeridos
+
+- FASE 4C.5: Mover furniture (drag a nuevo tile).
+- FASE 4D: Marketplace / Exchange básico.
+- FASE 4A.7: Elevation rendering.
+
+---
+
+## 2026-06-06 (FASE 4C.3 — Pick Up / Remove Furniture)
+
+### Change Summary
+
+Implementación completa de Pick Up: usuarios pueden retirar su propio furniture colocado. El furniture vuelve al inventario, desaparece en todos los clientes por WebSocket, y los blocked tiles se liberan para pathfinding.
+
+### Reglas de negocio
+
+- Solo el owner (`owner_user_id = usuario autenticado`) puede retirar.
+- `owner_user_id IS NULL` = system decor → no removible.
+- Furniture de otro usuario → rechazado con 422.
+- Furniture inexistente o de otra room → 404.
+
+### Archivos Modificados — Backend
+
+- **`realtime/RoomEventType.java`**: Añadido `ROOM_FURNITURE_REMOVED`.
+- **`realtime/FurnitureRemovedPayload.java`**: Record `furnitureId, catalogCode, removedByUserId, removedByUsername`.
+- **`furniture/RemoveFurnitureResponse.java`**: Record `removedFurnitureId, catalogCode, updatedInventoryItem`.
+- **`furniture/RoomFurnitureDto.java`**: Añadido campo `ownerUserId` (nullable Long). El `from()` extrae `entity.getOwnerUser().getId()` via Hibernate proxy (no SQL extra).
+- **`furniture/RoomFurnitureRepository.java`**: Añadido `findByIdAndRoom_Id(Long id, Long roomId)` con `@EntityGraph("catalogItem")`.
+- **`furniture/FurnitureRemovalService.java`**: Nuevo servicio `@Transactional`. Valida: furniture existe en esa room (404), owner != null (422), owner == userId (422). Borra `room_furniture`. Incrementa `user_inventory.quantity` (crea row si no existe). Retorna `RemoveFurnitureResponse`.
+- **`furniture/RoomFurnitureController.java`**: `DELETE /api/rooms/{roomId}/furniture/{roomFurnitureId}` → valida room → llama removal service → broadcast `ROOM_FURNITURE_REMOVED` post-commit.
+- **`test/RoomFurnitureControllerTest.java`**: Añadido `@MockBean FurnitureRemovalService`.
+
+### Archivos Modificados — Frontend
+
+- **`types/api.types.ts`**: `ROOM_FURNITURE_REMOVED` en `RoomEventType`. Nuevas interfaces `FurnitureRemovedPayload`, `RemoveFurnitureResponse`. Campo `ownerUserId?: number | null` en `RoomFurniture`.
+- **`services/rooms.service.ts`**: `removeFurniture(roomId, roomFurnitureId, token)` → `DELETE /api/rooms/{roomId}/furniture/{roomFurnitureId}`.
+- **`game/data/mainLobbyFurniture.ts`**: `StaticFurnitureInstance` extendido con `dbId?: number` y `ownerUserId?: number | null`. `roomFurnitureToStaticInstance` mapea ambos campos desde `RoomFurniture`.
+- **`game/types/game.types.ts`**: `RoomSceneOptions` añade `onFurniturePickUp?(furnitureId, catalogCode, pctX, pctY)`.
+- **`game/scenes/RoomScene.ts`**:
+  - Nuevo campo `furnitureObjects: Map<string, GameObject[]>` — trackea sprites Phaser por instance ID.
+  - `drawDecorations()` y `addFurnitureInstance()` guardan objetos en `furnitureObjects`.
+  - `addFurnitureInstance()` propaga `dbId` y `ownerUserId` al `StaticFurnitureInstance`.
+  - `removeFurnitureInstance(furnitureId)` — elimina sprites, libera blocked tiles, actualiza `addedFurnitureIds`.
+  - `ownedFurnitureAtTile(position)` — busca furniture propio (dbId definido + ownerUserId == currentUser.id) en ese tile.
+  - `handlePointerDown()` — antes de check isBlocked, consulta `ownedFurnitureAtTile`. Si hay furniture propio, llama `onFurniturePickUp` y retorna (no camina).
+  - `handleShutdown()` — limpia `furnitureObjects`.
+- **`game/PhaserRoom.tsx`**: Prop `onFurniturePickUp` en `PhaserRoomProps`. `PhaserRoomHandle` expone `removeFurnitureInstance`. Pasa callback a `RoomScene`.
+- **`pages/RoomPage.tsx`**:
+  - Estados: `furnitureMenu` (furnitureId, catalogCode, pctX, pctY), `inventoryRefreshKey`, `isRemoving`.
+  - `handleFurniturePickUp` — abre context menu.
+  - `handlePickUpConfirm` — llama `removeFurniture` REST, elimina de scene, incrementa `inventoryRefreshKey`.
+  - `ROOM_FURNITURE_REMOVED` WS handler — dedupe via `addedFurnitureIdsRef`, llama `removeFurnitureInstance`, cierra menú si aplica.
+  - Context menu retro sobre `.game-surface`: botones "Pick up" y "Cancel", posicionado en % del canvas.
+  - `InventoryPanel` recibe `key={inventoryRefreshKey}` para refrescar tras remove.
+- **`styles.css`**: Estilos `.furniture-context-menu`, `.furniture-menu-action`, `.furniture-menu-cancel`.
+
+### Tests
+
+- **`FurnitureRemovalServiceTest.java`**: 8 tests nuevos.
+- `mvn test` → 68 tests, BUILD SUCCESS.
+- `npm run build` → sin errores TypeScript.
+
+### Próximos pasos sugeridos
+
+- FASE 4C.4: Mover furniture (drag a nuevo tile).
+- FASE 4C.5: Rotación de furniture colocado.
+- FASE 4A.4: Tile elevation system.
+
+---
+
 ## 2026-06-06 (FASE 4C.2 — Place Furniture Backend + WebSocket)
 
 ### Change Summary

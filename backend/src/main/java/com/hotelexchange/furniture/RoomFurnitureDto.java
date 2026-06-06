@@ -17,10 +17,12 @@ public record RoomFurnitureDto(
         int height,
         boolean blocksMovement,
         String interactionType,
-        JsonNode state
+        JsonNode state,
+        Long ownerUserId
 ) {
     public static RoomFurnitureDto from(RoomFurnitureEntity entity, JsonNode state) {
         FurnitureCatalogEntity catalogItem = entity.getCatalogItem();
+        Long ownerId = entity.getOwnerUser() != null ? entity.getOwnerUser().getId() : null;
         return new RoomFurnitureDto(
                 entity.getId(),
                 catalogItem.getCode(),
@@ -35,7 +37,8 @@ public record RoomFurnitureDto(
                 catalogItem.getHeight(),
                 catalogItem.isBlocksMovement(),
                 catalogItem.getInteractionType(),
-                state
+                state,
+                ownerId
         );
     }
 }

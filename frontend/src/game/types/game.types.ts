@@ -17,4 +17,5 @@ export interface RoomSceneOptions {
   currentUser: User;
   onMoveRequest: (position: GridPosition) => void;
   onReady?: () => void;
+  onFurniturePickUp?: (furnitureId: number, catalogCode: string, currentRotation: string, pctX: number, pctY: number) => void;
 }

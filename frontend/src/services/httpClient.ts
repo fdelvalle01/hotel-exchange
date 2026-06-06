@@ -38,17 +38,38 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     headers.set('Authorization', `Bearer ${options.token}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: options.method ?? 'GET',
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+  const url = `${API_BASE_URL}${path}`;
+  const method = options.method ?? 'GET';
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  } catch (networkError) {
+    if (import.meta.env.VITE_FURNITURE_DEBUG === 'true') {
+      console.error('[httpClient] Network error', { method, url, cause: networkError });
+    }
+    throw new ApiError('Network error: backend unavailable or request blocked', 0, null);
+  }
 
   const text = await response.text();
-  const data = text.length > 0 ? JSON.parse(text) : null;
+  let data: unknown = null;
+  try {
+    if (text.length > 0) {
+      data = JSON.parse(text);
+    }
+  } catch {
+    // non-JSON body (HTML error page from proxy or unhandled Spring error)
+  }
 
   if (!response.ok) {
-    const message = typeof data?.message === 'string' ? data.message : 'Request failed';
+    const body = data as Record<string, unknown> | null;
+    const message = typeof body?.message === 'string'
+      ? body.message
+      : `Server error (HTTP ${response.status})`;
     throw new ApiError(message, response.status, data);
   }
 

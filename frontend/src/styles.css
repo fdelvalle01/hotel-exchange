@@ -1266,6 +1266,56 @@ p {
   background: rgba(122, 58, 54, 0.28);
 }
 
+/* ── Furniture context menu ──────────────────────────────── */
+
+.furniture-context-menu {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #1a1612;
+  border: 1px solid #d8a23d;
+  border-radius: 4px;
+  padding: 6px 8px;
+  z-index: 200;
+  transform: translate(-50%, -110%);
+  pointer-events: all;
+  min-width: 100px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+.furniture-menu-action {
+  background: #2a2018;
+  border: 1px solid #d8a23d;
+  color: #f5d78e;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+}
+
+.furniture-menu-action:hover {
+  background: rgba(216, 162, 61, 0.22);
+}
+
+.furniture-menu-cancel {
+  background: transparent;
+  border: 1px solid #4a3a28;
+  color: #9a8060;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: inherit;
+  text-align: left;
+}
+
+.furniture-menu-cancel:hover {
+  background: rgba(74, 58, 40, 0.3);
+}
+
 /* ─────────────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {

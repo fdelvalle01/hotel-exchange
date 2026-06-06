@@ -67,6 +67,7 @@ export class RoomScene extends Phaser.Scene {
   private readonly decorativeBlockedTileKeys: Set<string>;
   private readonly blockedTileKeys: Set<string>;
   private readonly addedFurnitureIds: Set<number>;
+  private readonly furnitureObjects = new Map<string, Phaser.GameObjects.GameObject[]>();
   private readonly pendingSceneEvents: PendingSceneEvent[] = [];
   private readonly pendingChatBubblesByUser = new Map<number, string>();
   private floorLayer: Phaser.GameObjects.Container | null = null;
@@ -111,7 +112,16 @@ export class RoomScene extends Phaser.Scene {
   }
 
   preload() {
-    preloadFurnitureSprites(this, this.furnitureInstances, FURNITURE_CATALOG_BY_ID);
+    // Preload every catalog item so ghost sprites and newly-placed furniture
+    // always have textures ready even when the room starts empty.
+    const allInstances: StaticFurnitureInstance[] = Array.from(FURNITURE_CATALOG_BY_ID.keys()).map((id) => ({
+      id: `catalog-preload-${id}`,
+      catalogId: id,
+      x: 0,
+      y: 0,
+      rotation: 'SE' as FurnitureRotation,
+    }));
+    preloadFurnitureSprites(this, allInstances, FURNITURE_CATALOG_BY_ID);
   }
 
   create() {
@@ -340,6 +350,9 @@ export class RoomScene extends Phaser.Scene {
 
     for (const rendered of renderedFurniture) {
       this.decorationLayer.add(rendered.object);
+      const existing = this.furnitureObjects.get(rendered.id) ?? [];
+      existing.push(rendered.object);
+      this.furnitureObjects.set(rendered.id, existing);
     }
 
     this.sortAvatars();
@@ -469,6 +482,18 @@ export class RoomScene extends Phaser.Scene {
     }
 
     if (!isPointInsideIsoTile(worldPoint.x, worldPoint.y, position.x, position.y, this.origin)) {
+      return;
+    }
+
+    const ownedFurniture = this.ownedFurnitureAtTile(position);
+    if (ownedFurniture !== null && ownedFurniture.dbId !== undefined) {
+      this.options.onFurniturePickUp?.(
+        ownedFurniture.dbId,
+        ownedFurniture.catalogId,
+        ownedFurniture.rotation ?? 'SE',
+        pointer.x / this.scale.width,
+        pointer.y / this.scale.height,
+      );
       return;
     }
 
@@ -757,6 +782,7 @@ export class RoomScene extends Phaser.Scene {
     this.pendingChatBubblesByUser.clear();
     this.avatars.clear();
     this.tiles.clear();
+    this.furnitureObjects.clear();
     this.exitPlacementModeInternal(false);
     this.floorLayer = null;
     this.highlightLayer = null;
@@ -855,6 +881,8 @@ export class RoomScene extends Phaser.Scene {
       width: furniture.width,
       height: furniture.height,
       blocksMovement: furniture.blocksMovement,
+      dbId: furniture.id,
+      ownerUserId: furniture.ownerUserId ?? null,
     };
 
     this.furnitureInstances.push(instance);
@@ -887,9 +915,146 @@ export class RoomScene extends Phaser.Scene {
       );
       for (const item of rendered) {
         this.decorationLayer.add(item.object);
+        const existing = this.furnitureObjects.get(item.id) ?? [];
+        existing.push(item.object);
+        this.furnitureObjects.set(item.id, existing);
       }
       this.sortAvatars();
     }
+  }
+
+  removeFurnitureInstance(furnitureId: number) {
+    const instanceId = `room-furniture-${furnitureId}`;
+    const idx = this.furnitureInstances.findIndex((i) => i.id === instanceId);
+    if (idx === -1) return;
+
+    const instance = this.furnitureInstances[idx];
+    this.furnitureInstances.splice(idx, 1);
+    this.addedFurnitureIds.delete(furnitureId);
+
+    const objects = this.furnitureObjects.get(instanceId) ?? [];
+    for (const obj of objects) {
+      this.decorationLayer?.remove(obj);
+      obj.destroy();
+    }
+    this.furnitureObjects.delete(instanceId);
+
+    if (instance.blocksMovement) {
+      const width = instance.width ?? 1;
+      const height = instance.height ?? 1;
+      for (let dy = 0; dy < height; dy++) {
+        for (let dx = 0; dx < width; dx++) {
+          const pos = { x: instance.x + dx, y: instance.y + dy };
+          const key = this.tileKey(pos);
+          this.decorativeBlockedTileKeys.delete(key);
+          if (!this.serverBlockedTileKeys.has(key)) {
+            this.blockedTileKeys.delete(key);
+            const tileView = this.tiles.get(key);
+            if (tileView) {
+              tileView.blocked = false;
+              tileView.object.setInteractive();
+              this.paintTileByKey(key);
+            }
+          }
+        }
+      }
+    }
+
+    this.sortAvatars();
+  }
+
+  rotateFurnitureInstance(furnitureId: number, newRotation: string, newWidth: number, newHeight: number) {
+    const instanceId = `room-furniture-${furnitureId}`;
+    const instance = this.furnitureInstances.find((i) => i.id === instanceId);
+    if (!instance) return;
+
+    // Remove old blocked tiles
+    if (instance.blocksMovement) {
+      const oldW = instance.width ?? 1;
+      const oldH = instance.height ?? 1;
+      for (let dy = 0; dy < oldH; dy++) {
+        for (let dx = 0; dx < oldW; dx++) {
+          const pos = { x: instance.x + dx, y: instance.y + dy };
+          const key = this.tileKey(pos);
+          this.decorativeBlockedTileKeys.delete(key);
+          if (!this.serverBlockedTileKeys.has(key)) {
+            this.blockedTileKeys.delete(key);
+            const tileView = this.tiles.get(key);
+            if (tileView) {
+              tileView.blocked = false;
+              tileView.object.setInteractive();
+              this.paintTileByKey(key);
+            }
+          }
+        }
+      }
+    }
+
+    instance.rotation = this.normalizeRotation(newRotation);
+    instance.width = newWidth;
+    instance.height = newHeight;
+
+    // Destroy old sprites and re-render
+    const objects = this.furnitureObjects.get(instanceId) ?? [];
+    for (const obj of objects) {
+      this.decorationLayer?.remove(obj);
+      obj.destroy();
+    }
+    this.furnitureObjects.delete(instanceId);
+
+    if (this.decorationLayer) {
+      const rendered = renderFurnitureSprites(
+        this,
+        [instance],
+        FURNITURE_CATALOG_BY_ID,
+        (x, y) => getTileCenter(x, y, this.origin),
+      );
+      for (const item of rendered) {
+        this.decorationLayer.add(item.object);
+        const existing = this.furnitureObjects.get(item.id) ?? [];
+        existing.push(item.object);
+        this.furnitureObjects.set(item.id, existing);
+      }
+    }
+
+    // Add new blocked tiles
+    if (instance.blocksMovement) {
+      for (let dy = 0; dy < newHeight; dy++) {
+        for (let dx = 0; dx < newWidth; dx++) {
+          const pos = { x: instance.x + dx, y: instance.y + dy };
+          const key = this.tileKey(pos);
+          this.decorativeBlockedTileKeys.add(key);
+          this.blockedTileKeys.add(key);
+          const tileView = this.tiles.get(key);
+          if (tileView && !tileView.blocked) {
+            tileView.blocked = true;
+            tileView.object.disableInteractive();
+            tileView.object.removeListener('pointerover');
+            tileView.object.removeListener('pointerout');
+            this.paintTileByKey(key);
+          }
+        }
+      }
+    }
+
+    this.sortAvatars();
+  }
+
+  private ownedFurnitureAtTile(position: GridPosition): StaticFurnitureInstance | null {
+    const currentUserId = this.options.currentUser.id;
+    for (const instance of this.furnitureInstances) {
+      if (instance.dbId === undefined) continue;
+      if (instance.ownerUserId !== currentUserId) continue;
+      const w = instance.width ?? 1;
+      const h = instance.height ?? 1;
+      if (
+        position.x >= instance.x && position.x < instance.x + w &&
+        position.y >= instance.y && position.y < instance.y + h
+      ) {
+        return instance;
+      }
+    }
+    return null;
   }
 
   private normalizeRotation(rotation: string): FurnitureRotation {

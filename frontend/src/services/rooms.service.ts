@@ -1,4 +1,10 @@
-import type { PlaceFurnitureRequest, PlaceFurnitureResponse, Room } from '../types/api.types';
+import type {
+  PlaceFurnitureRequest,
+  PlaceFurnitureResponse,
+  RemoveFurnitureResponse,
+  RotateFurnitureResponse,
+  Room,
+} from '../types/api.types';
 import { apiRequest } from './httpClient';
 
 export function listRooms(token: string) {
@@ -19,4 +25,27 @@ export function placeFurniture(
     body: request,
     token,
   });
+}
+
+export function removeFurniture(
+  roomId: number,
+  roomFurnitureId: number,
+  token: string,
+): Promise<RemoveFurnitureResponse> {
+  return apiRequest<RemoveFurnitureResponse>(
+    `/api/rooms/${roomId}/furniture/${roomFurnitureId}`,
+    { method: 'DELETE', token },
+  );
+}
+
+export function rotateFurniture(
+  roomId: number,
+  roomFurnitureId: number,
+  rotation: string,
+  token: string,
+): Promise<RotateFurnitureResponse> {
+  return apiRequest<RotateFurnitureResponse>(
+    `/api/rooms/${roomId}/furniture/${roomFurnitureId}/rotate`,
+    { method: 'PATCH', body: { rotation }, token },
+  );
 }
