@@ -8,7 +8,7 @@ spring:
   application:
     name: hotel-exchange-backend
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/hotel_exchange}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/hotel_exchange}
     username: ${SPRING_DATASOURCE_USERNAME:hotel_exchange}
     password: ${SPRING_DATASOURCE_PASSWORD:hotel_exchange}
   flyway:

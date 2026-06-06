@@ -1,5 +1,99 @@
 # Hotel Exchange AI Memory
 
+## 2026-06-05 (FASE 4A.3 Geometry Fix — Continuación: Phaser Polygon bug + V7 + decor cleanup)
+
+### Change Summary
+
+Tres correcciones sobre la sesión anterior de FASE 4A.3:
+
+1. **Bug crítico de Phaser Polygon**: `scene.add.polygon(x, y, points)` renderiza el polígono con su centro visual en `(x - displayOriginX, y - displayOriginY)`. Para nuestro diamond 64×32, el offset es (32, 16) — exactamente un tile NW. Las paredes usan `Graphics` (posición exacta) pero los tiles usaban `add.polygon` sin compensar, dejando negro al SE. Fix: `+TILE_WIDTH/2, +TILE_HEIGHT/2` al crear/mover todos los polygons de tiles en `RoomScene.ts`.
+
+2. **V7 migration**: El octágono de 3-cortes de V6 generaba múltiples faces SW apilados en cada esquina escalonada, creando apariencia de "múltiples pisos". V7 simplifica a 1-corte por esquina (solo 4 tiles void en las 4 esquinas exactas), conservando el concepto de void tiles sin el efecto visual indeseado.
+
+3. **Removido `legacyTradingDecorRenderer`**: Los paneles "MARKET OPEN" y "EXCHANGE DESK" eran código de decoración legacy. Eliminados import, llamada y archivo.
+
+### Archivos Modificados
+
+- `frontend/src/game/scenes/RoomScene.ts`:
+  - `createTile`: posición polygon `center.x + TILE_WIDTH/2, center.y + TILE_HEIGHT/2`
+  - `createBlockedMarker`: posición `center.x + 14, center.y + 6` (diamond 28×14, displayOrigin=14,7)
+  - `moveSelectionHighlight`: posición inicial y `setPosition` con el mismo offset de tile
+
+### Archivos Creados
+
+- `backend/.../db/migration/V7__simplify_exchange_lobby_floor_map.sql` — octágono 1-cut (solo esquinas void)
+
+### Archivos Eliminados
+
+- `frontend/src/game/rendering/legacyTradingDecorRenderer.ts`
+
+### Resultado de Build y Tests
+
+```
+npm run build: ✓ 1608 modules, built in 18.14s (sin errores TypeScript)
+mvn test:      Tests run: 27, Failures: 0, Errors: 0 — BUILD SUCCESS
+```
+
+### Decisiones de Diseño
+
+- **Phaser Polygon offset**: La causa es que `setOrigin(0.5, 0.5)` calcula `displayOriginX = round(0.5 * geom.width)`. El render subtract el displayOrigin de cada punto antes de aplicar la transform matricial. La solución más simple (sin cambiar los points) es pre-sumar el displayOrigin a la posición.
+- **1-cut vs 3-cut octagon**: 3-cut escalonado crea múltiples SW face panels desconectados visualmente. 1-cut tiene un solo face SW por esquina — el efecto de "plataforma con borde limpio" funciona correctamente.
+
+---
+
+## 2026-06-05 (FASE 4A.3 Geometry Fix — Per-tile edge rendering + V6 octagon floorMap)
+
+### Change Summary
+
+Corrigió la geometría de sala: la plataforma y las paredes ahora nacen de los bordes reales de los tiles existentes en lugar de una bounding-box rectangular. Se introdujo `roomGeometry.ts` con detección de exposed edges. Se creó migración V6 que cambia el floorMap de `exchange_lobby_01` de un rectángulo 12×12 a un octágono con esquinas `x` (void), demostrando que tiles void no se renderizan ni reciben paredes.
+
+### Archivos Creados
+
+- `frontend/src/game/rendering/roomGeometry.ts` — `getTileVertices`, `getExposedEdges`, `getRoomCorners`. Expone 4 tipos de borde: NW (left wall, exposed when no tile at x-1,y), NE (right wall, x,y-1), SW (left platform side, x,y+1), SE (right platform side, x+1,y). `getRoomCorners` usa extremos isométricos (min/max de x±y) en lugar de bounding-box de índices de grid.
+- `backend/.../db/migration/V6__update_exchange_lobby_floor_map.sql` — actualiza `exchange_lobby_01` con floorMap octagonal (3 tiles de corte en cada esquina), spawn (1,1)→(5,5) que estaba sobre un tile void.
+
+### Archivos Modificados
+
+- `frontend/src/game/rendering/roomShellRenderer.ts` — `renderRoomShell` ahora acepta `decodedTiles | null` + `width/height/origin` en lugar de `RoomCorners`. Renderiza un quad por cada exposed edge (NW/NE/SW/SE) usando `getExposedEdges`. Para rooms rectangulares los quads son seamless (tiles adyacentes comparten vértices). `calculateCorners` delega a `getRoomCorners` de `roomGeometry.ts`.
+- `frontend/src/game/scenes/RoomScene.ts` — `drawRoomShellAndDecor` pasa `this.decodedTiles`, `room.width/height`, y `this.origin` a `renderRoomShell` en lugar de `corners`.
+
+### Resultado de Build y Tests
+
+```
+npm run build: ✓ 1608 modules, built in 17.63s (sin errores TypeScript)
+mvn test:      Tests run: 27, Failures: 0, Errors: 0 — BUILD SUCCESS
+```
+
+### Decisiones de Diseño
+
+- **Per-tile vs. polígono único**: Para rooms rectangulares, los quads por tile producen el mismo resultado visual que un polígono único (vértices compartidos entre tiles adyacentes). Para rooms con forma irregular (octágono), los quads siguen exactamente el contorno del room, con pequeños "huecos" en los escalones de las esquinas cortadas — comportamiento geométricamente correcto, no hay pared sobre tiles void.
+- **Corners con extremos isométricos**: `getRoomCorners` usa `min/max (x+y)` para north/south y `min/max (x-y)` para east/west. Garantiza que los corners caigan sobre tiles reales aunque el bounding-box apunte a tiles void.
+- **sideDepthPx = 20**: Mantenido como valor cosmético (grosor visual de la plataforma). Para altura 0 en el suelo no hay un "real" profundidad isométrica — es solo un trim visual.
+- **V6 spawn**: (1,1) era void en el octágono. Nuevo spawn (5,5) en el interior sólido. Furniture existente (sofa 2,7; chair 7,5; table 5,6) cae en filas completas (3-8), ningún cambio de posición necesario.
+- **Walls en escalones del octágono**: Los tiles en los escalones de las esquinas cortadas (e.g., (3,0)→(2,1)→(1,2)) no comparten vértices entre sí (son vecinos diagonales, no ortogonales). Esto produce pequeñas interrupciones en la pared en esas esquinas — correctamente no hay pared sobre las posiciones void.
+
+### Smoke Test Recomendado
+
+1. `docker compose up --build` (Flyway aplica V6)
+2. Login `trader/trader`, entrar Main Lobby
+3. Confirmar forma octagonal del floorMap (esquinas vacías sin tiles)
+4. Confirmar paredes solo sobre tiles existentes, no en esquinas void
+5. Confirmar plataforma lateral sigue contorno del octágono
+6. Confirmar spawn en (5,5), no en (1,1)
+7. Confirmar furniture sigue en posiciones correctas y walkable
+8. Confirmar `isInsideRoom` rechaza clics en tiles void
+9. Consola sin errores rojos
+
+### Próximo Paso Recomendado: FASE 4A.4
+
+Movement Validation con Structural Blockers (backend):
+1. `RoomLayoutService.isExistingTile(model, position)` usando `RoomModelService.existingTileSet`
+2. `validateWalkableDestination` verifica existencia del tile antes de blocked check
+3. Tests: rechazo de movimiento a tile `x` (void) y tile `b` (structural)
+4. Frontend: click en void tile ya rechazado por `isInsideRoom` — solo necesita backend validation
+
+---
+
 ## 2026-06-05 (FASE 4A.3 — Render FloorMap / Walls desde API)
 
 ### Change Summary

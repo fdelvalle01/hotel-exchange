@@ -7,7 +7,7 @@ import type {
   UserMovedPayload,
 } from '../../types/api.types';
 import { Avatar } from '../entities/Avatar';
-import type { RoomCorners, RoomSceneOptions, ScreenPoint } from '../types/game.types';
+import type { RoomSceneOptions, ScreenPoint } from '../types/game.types';
 import {
   getTileCenter,
   isoToGrid,
@@ -32,11 +32,13 @@ import {
   type RoomTileView,
 } from '../data/floorMapDecoder';
 import {
-  calculateCorners,
   renderRoomShell,
   type RoomShellConfig,
 } from '../rendering/roomShellRenderer';
-import { renderLegacyTradingDecor } from '../rendering/legacyTradingDecorRenderer';
+import {
+  getExposedEdges,
+  getTileVertices,
+} from '../rendering/roomGeometry';
 
 interface TileView {
   object: Phaser.GameObjects.Polygon;
@@ -198,13 +200,11 @@ export class RoomScene extends Phaser.Scene {
     const shell = room.shell;
     const shellConfig: RoomShellConfig = {
       wallMode: shell?.wallMode ?? 'STANDARD',
-      // Convert tile units to pixels; fallback 92px matches original hardcoded value
       wallHeightPx: shell ? shell.wallHeight * TILE_HEIGHT : 92,
       sideDepthPx: 20,
     };
 
-    const corners = this.roomCorners();
-    this.drawRoomShellAndDecor(corners, shellConfig);
+    this.drawRoomShellAndDecor(shellConfig);
 
     if (this.decodedTiles) {
       for (const tile of this.decodedTiles) {
@@ -220,7 +220,7 @@ export class RoomScene extends Phaser.Scene {
       }
     }
 
-    this.drawRoomTrim(corners);
+    this.drawRoomTrim();
     this.drawDecorations();
   }
 
@@ -241,9 +241,11 @@ export class RoomScene extends Phaser.Scene {
     const blocked = this.isBlocked(position);
     const serverBlocked = this.serverBlockedTileKeys.has(tileKey);
     const fill = this.floorTileFill(position, serverBlocked, tileHeight);
+    // Phaser Polygon renders with center at (x - displayOriginX, y - displayOriginY).
+    // For a 64×32 diamond, displayOrigin = (32, 16), so we compensate by adding it back.
     const tile = this.add.polygon(
-      center.x,
-      center.y,
+      center.x + TILE_WIDTH / 2,
+      center.y + TILE_HEIGHT / 2,
       [
         0,
         -TILE_HEIGHT / 2,
@@ -287,9 +289,10 @@ export class RoomScene extends Phaser.Scene {
       return;
     }
 
+    // Blocked marker diamond 28×14 → displayOrigin (14, 7); compensate same as floor tile.
     const marker = this.add.polygon(
-      center.x,
-      center.y - 1,
+      center.x + 14,
+      center.y + 6,
       [
         0,
         -7,
@@ -327,39 +330,68 @@ export class RoomScene extends Phaser.Scene {
     this.sortAvatars();
   }
 
-  private drawRoomShellAndDecor(corners: RoomCorners, config: RoomShellConfig) {
+  private drawRoomShellAndDecor(config: RoomShellConfig) {
     const floorLayer = this.floorLayer;
     if (!floorLayer) {
       return;
     }
 
-    renderRoomShell(this, floorLayer, corners, config);
-    renderLegacyTradingDecor(this, floorLayer, corners);
+    renderRoomShell(
+      this, floorLayer,
+      this.decodedTiles,
+      this.options.room.width,
+      this.options.room.height,
+      this.origin,
+      config,
+    );
   }
 
-  private drawRoomTrim(corners: RoomCorners) {
+  private drawRoomTrim() {
     const floorLayer = this.floorLayer;
     if (!floorLayer) {
       return;
     }
 
     const trim = this.add.graphics();
-    trim.lineStyle(2, 0x101b19, 0.84);
-    trim.beginPath();
-    trim.moveTo(corners.north.x, corners.north.y);
-    trim.lineTo(corners.east.x, corners.east.y);
-    trim.lineTo(corners.south.x, corners.south.y);
-    trim.lineTo(corners.west.x, corners.west.y);
-    trim.closePath();
-    trim.strokePath();
-    trim.lineStyle(1, 0xd8a23d, 0.22);
-    trim.beginPath();
-    trim.moveTo(corners.north.x, corners.north.y + 2);
-    trim.lineTo(corners.east.x - 4, corners.east.y + 1);
-    trim.lineTo(corners.south.x, corners.south.y - 2);
-    trim.lineTo(corners.west.x + 4, corners.west.y + 1);
-    trim.closePath();
-    trim.strokePath();
+
+    if (this.decodedTiles) {
+      // Per-edge strokes follow the actual room outline regardless of shape.
+      const edges = getExposedEdges(this.decodedTiles);
+      trim.lineStyle(2, 0x101b19, 0.84);
+      for (const edge of edges) {
+        const v = getTileVertices(edge.x, edge.y, this.origin);
+        trim.beginPath();
+        switch (edge.face) {
+          case 'NW': trim.moveTo(v.west.x, v.west.y);  trim.lineTo(v.north.x, v.north.y); break;
+          case 'NE': trim.moveTo(v.north.x, v.north.y); trim.lineTo(v.east.x, v.east.y);  break;
+          case 'SW': trim.moveTo(v.south.x, v.south.y); trim.lineTo(v.west.x, v.west.y);  break;
+          case 'SE': trim.moveTo(v.east.x, v.east.y);  trim.lineTo(v.south.x, v.south.y); break;
+        }
+        trim.strokePath();
+      }
+    } else {
+      // Rectangular fallback: diamond through bounding-box corners.
+      const { room } = this.options;
+      const w = room.width - 1;
+      const h = room.height - 1;
+      const n = getTileVertices(0, 0,   this.origin).north;
+      const e = getTileVertices(w, 0,   this.origin).east;
+      const s = getTileVertices(w, h,   this.origin).south;
+      const wv = getTileVertices(0, h,  this.origin).west;
+      trim.lineStyle(2, 0x101b19, 0.84);
+      trim.beginPath();
+      trim.moveTo(n.x, n.y); trim.lineTo(e.x, e.y);
+      trim.lineTo(s.x, s.y); trim.lineTo(wv.x, wv.y);
+      trim.closePath();
+      trim.strokePath();
+      trim.lineStyle(1, 0xd8a23d, 0.22);
+      trim.beginPath();
+      trim.moveTo(n.x, n.y + 2); trim.lineTo(e.x - 4, e.y + 1);
+      trim.lineTo(s.x, s.y - 2); trim.lineTo(wv.x + 4, wv.y + 1);
+      trim.closePath();
+      trim.strokePath();
+    }
+
     floorLayer.add(trim);
   }
 
@@ -456,8 +488,8 @@ export class RoomScene extends Phaser.Scene {
 
     if (!this.selectedHighlight) {
       this.selectedHighlight = this.add.polygon(
-        center.x,
-        center.y,
+        center.x + TILE_WIDTH / 2,
+        center.y + TILE_HEIGHT / 2,
         [
           0,
           -TILE_HEIGHT / 2,
@@ -476,7 +508,7 @@ export class RoomScene extends Phaser.Scene {
       return;
     }
 
-    this.selectedHighlight.setPosition(center.x, center.y);
+    this.selectedHighlight.setPosition(center.x + TILE_WIDTH / 2, center.y + TILE_HEIGHT / 2);
     this.selectedHighlight.setVisible(true);
   }
 
@@ -744,12 +776,4 @@ export class RoomScene extends Phaser.Scene {
     return FLOOR_TILE_COLORS[hash];
   }
 
-  private roomCorners(): RoomCorners {
-    return calculateCorners(
-      this.decodedTiles,
-      this.options.room.width,
-      this.options.room.height,
-      this.origin,
-    );
-  }
 }
