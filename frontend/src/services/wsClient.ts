@@ -36,6 +36,7 @@ export class RoomWebSocketClient {
   private openSocket(isReconnect: boolean) {
     this.options.onStatusChange(isReconnect ? 'reconnecting' : 'connecting');
     const url = `${WS_BASE_URL}/ws/rooms/${this.options.roomId}?token=${encodeURIComponent(this.options.token)}`;
+    this.wsLog('creating socket', { roomId: this.options.roomId, isReconnect });
     try {
       this.socket = new WebSocket(url);
     } catch {
@@ -47,7 +48,8 @@ export class RoomWebSocketClient {
     this.socket.onopen = () => {
       this.reconnectAttempts = 0;
       this.options.onStatusChange('connected');
-      this.send('ROOM_JOIN');
+      this.wsLog('socket opened');
+      // Join is handled server-side on connection establishment; no client message needed.
     };
 
     this.socket.onmessage = (message) => {
@@ -63,6 +65,7 @@ export class RoomWebSocketClient {
     };
 
     this.socket.onclose = (event) => {
+      this.wsLog('socket closed', { code: event.code, reason: event.reason, manual: this.manualClose });
       this.socket = null;
       if (this.manualClose) {
         this.options.onStatusChange('disconnected');
@@ -92,6 +95,7 @@ export class RoomWebSocketClient {
   }
 
   disconnect() {
+    this.wsLog('manual disconnect');
     this.manualClose = true;
     this.clearReconnectTimer();
     this.send('ROOM_LEAVE');
@@ -122,10 +126,16 @@ export class RoomWebSocketClient {
     this.reconnectAttempts += 1;
     this.options.onStatusChange('reconnecting');
     const delayMs = Math.min(1000 * 2 ** (this.reconnectAttempts - 1), 8000);
+    this.wsLog(`reconnect scheduled in ${delayMs}ms (attempt ${this.reconnectAttempts})`);
     this.clearReconnectTimer();
     this.reconnectTimer = window.setTimeout(() => {
       this.openSocket(true);
     }, delayMs);
+  }
+
+  private wsLog(...args: unknown[]) {
+    if (import.meta.env.VITE_WS_DEBUG !== 'true') return;
+    console.log('[WS]', ...args);
   }
 
   private isAuthenticationFailure(event: CloseEvent) {

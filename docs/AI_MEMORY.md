@@ -1,5 +1,187 @@
 # Hotel Exchange AI Memory
 
+## 2026-06-06 (FASE 4C.2 — Place Furniture Backend + WebSocket)
+
+### Change Summary
+
+Furniture placement completo: REST `POST /api/rooms/{roomId}/furniture`, validación autoritativa backend, transacción insert + decrement, broadcast `ROOM_FURNITURE_ADDED` por WebSocket, y frontend que aplica el resultado sin recargar la página.
+
+### Archivos Modificados — Backend
+
+- **`realtime/RoomEventType.java`**: Añadido `ROOM_FURNITURE_ADDED`.
+- **`realtime/RoomWebSocketHandler.java`**: Caso `ROOM_FURNITURE_ADDED` en switch → `sendError` (solo server→client).
+- **`error/FurniturePlacementException.java`**: Nueva excepción para errores de lógica de placement.
+- **`error/GlobalExceptionHandler.java`**: Handler `@ExceptionHandler(FurniturePlacementException.class)` → HTTP 422.
+- **`furniture/PlaceFurnitureRequest.java`**: Record `catalogCode, x, y, rotation` con `@NotBlank`.
+- **`furniture/PlaceFurnitureResponse.java`**: Record `placedFurniture: RoomFurnitureDto, updatedInventoryItem: InventoryItemDto`.
+- **`realtime/FurnitureAddedPayload.java`**: Record `furniture, placedByUserId, placedByUsername`.
+- **`realtime/RoomEventBroadcaster.java`**: Componente Spring para broadcast WS a todos los sessions de un room. Sincroniza sobre session para thread-safety.
+- **`inventory/UserInventoryRepository.java`**: Añadido `findInventoryItemForUserAndCatalog(@Param userId, @Param catalogItemId)` con `@Query` + `join fetch`.
+- **`furniture/RoomFurnitureEntity.java`**: Añadido constructor `protected` (no-arg para JPA) + constructor público `(room, catalogItem, ownerUser, x, y, z, rotation)`.
+- **`furniture/FurniturePlacementService.java`**: Servicio `@Transactional`. Valida: catálogo existe, inventario existe y qty>0, cada tile del footprint existe y es walkable y no bloqueado por furniture existente. Insert `RoomFurnitureEntity` + decrement qty. Rotation default SE.
+- **`furniture/RoomFurnitureController.java`**: `POST /api/rooms/{roomId}/furniture` → llama servicio → broadcast post-commit.
+
+### Archivos Modificados — Frontend
+
+- **`types/api.types.ts`**: `ROOM_FURNITURE_ADDED` en `RoomEventType`, nuevas interfaces `PlaceFurnitureRequest`, `PlaceFurnitureResponse`, `FurnitureAddedPayload`.
+- **`services/rooms.service.ts`**: `placeFurniture(roomId, request, token)` → `POST /api/rooms/{roomId}/furniture`.
+- **`game/scenes/RoomScene.ts`**:
+  - Nuevos campos: `placementPending`, `onConfirmPlacementCallback`, `addedFurnitureIds`.
+  - `enterPlacementMode(item, onExit?, onConfirm?)` — acepta callback de confirmación.
+  - `handlePointerDown` — guarda con `placementPending`.
+  - `handlePlacementPointerDown` — en tile válido con confirm callback: marca `placementPending=true` y llama callback (espera a que React llame `exitPlacementMode` después del REST). Sin callback: exit inmediato.
+  - `setPlacementPending(pending)` — público, permite que React re-habilite input si el REST falla.
+  - `addFurnitureInstance(furniture)` — idempotente (dedupe por `addedFurnitureIds`). Convierte a `StaticFurnitureInstance`, actualiza `blockedTileKeys` y tile interactivity, renderiza sprite en `decorationLayer`.
+  - `normalizeRotation(rotation)` — privado, convierte string a `FurnitureRotation`.
+- **`game/PhaserRoom.tsx`**: Props `onPlacementConfirm?`. Handle expone `setPlacementPending` y `addFurnitureInstance`.
+- **`pages/RoomPage.tsx`**:
+  - `addedFurnitureIdsRef` — `Set<number>` inicializado con IDs de `room.furniture` al cargar. Previene double-render REST+WS.
+  - `handlePlacementConfirm(item, x, y, rotation)` — llama REST, añade furniture si ok, llama `exitPlacementMode`; en error re-habilita input.
+  - `ROOM_FURNITURE_ADDED` handler — dedupe via `addedFurnitureIdsRef`.
+  - Banner de placement muestra "Placing…" mientras `isPlacing=true` y oculta botón Cancel.
+
+### Tests Añadidos
+
+- **`FurniturePlacementServiceTest.java`**: 10 casos — valid placement, no inventory, qty 0, tile void, tile structurally blocked, tile furniture-blocked, 2x2 partial outside, 2x2 válido, qty decremented to 0, catalog not found.
+- **`RoomFurnitureControllerTest.java`**: 4 casos — unauthenticated (401), valid placement (201), placement exception (422), missing room (404).
+
+### Resultado de Build
+
+```
+mvn test: 60 tests, 0 failures, BUILD SUCCESS
+npm run build: ✓ 1610 modules, built in 18.59s (sin errores TypeScript)
+```
+
+---
+
+## 2026-06-06 (FASE 4C.1B — Stabilize Room Events)
+
+### Causa Raíz de Joins Duplicados
+
+**Problema principal: React StrictMode** (desarrollo únicamente).
+En `main.tsx` el árbol está envuelto en `<React.StrictMode>`. En desarrollo, React deliberadamente ejecuta cada `useEffect` dos veces: mount → cleanup → remount. El efecto de WebSocket en `RoomPage.tsx` creaba un cliente, conectaba (backend emite `ROOM_JOIN` broadcast desde `afterConnectionEstablished`), el cleanup lo desconectaba (backend emite `ROOM_LEAVE`), y luego reconectaba (segundo `ROOM_JOIN` broadcast). Resultado: "trader joined", "trader left", "trader joined".
+
+**Problema secundario: `this.send('ROOM_JOIN')` en wsClient**. El cliente enviaba `ROOM_JOIN` en `onopen`, pero el backend ya maneja el join completo en `afterConnectionEstablished`. El mensaje cliente solo causaba un `broadcastPresence` redundante.
+
+**Problema terciario: dep `room` en lugar de `room?.id`**. Si el objeto `room` fuera reemplazado con una nueva referencia (mismo ID), el efecto WS reconectaría innecesariamente.
+
+### Archivos Modificados
+
+- **`frontend/src/vite-env.d.ts`**: Declaró `ImportMetaEnv` con `VITE_WS_DEBUG` y `VITE_FURNITURE_DEPTH_DEBUG`.
+- **`frontend/src/services/wsClient.ts`**:
+  - Eliminado `this.send('ROOM_JOIN')` de `onopen` — join es manejado por el servidor en `afterConnectionEstablished`, el cliente no necesita enviarlo.
+  - Añadido método privado `wsLog(...args)` — loguea solo si `VITE_WS_DEBUG=true`. Llamado en: crear socket, socket abierto, socket cerrado, manual disconnect, reconnect programado.
+- **`frontend/src/pages/RoomPage.tsx`**:
+  - Añadido `recentJoinTimesRef: Map<number, number>` — registra el timestamp del último ROOM_JOIN por usuario. En ROOM_JOIN: si mismo usuario join en < 3s, ignora. En ROOM_LEAVE: limpia el timestamp para que un rejoin real sea visible.
+  - Añadido `handleRealtimeEventRef` — ref actualizado en cada render, permite que el efecto WS use siempre la versión más reciente del handler sin incluirlo en deps.
+  - Efecto WS cambiado de deps `[handleRealtimeEvent, logout, room, token]` → `[room?.id, token, logout]`. El `handleRealtimeEvent` se accede vía ref; `room?.id` evita reconexión si el objeto room cambia de referencia pero no de ID.
+  - Añadido comentario `eslint-disable-next-line react-hooks/exhaustive-deps` explicando la intención.
+
+### Por qué esto es correcto
+
+- **Producción**: StrictMode NO double-monta en producción → 0 joins duplicados. Los deps reducidos no cambian el comportamiento real.
+- **Desarrollo**: La deduplicación de 3s suprime el segundo ROOM_JOIN del ciclo StrictMode. El ROOM_LEAVE del cleanup sí aparece brevemente, pero el segundo join queda suprimido.
+- **Inventory/Placement/Chat**: No tocan `room?.id` ni `token` → efecto WS no se re-ejecuta → sin reconexión.
+
+### Resultado de Build
+
+```
+npm run build: ✓ 1610 modules, built in 10.78s (sin errores TypeScript)
+```
+
+### Próximos pasos
+
+FASE 4C.2: backend placement (POST /api/rooms/{id}/furniture, actualizar inventario, broadcast WebSocket).
+
+---
+
+## 2026-06-06 (FASE 4C.1 — Furniture Placement Preview, frontend only)
+
+### Change Summary
+
+Placement preview mode: el usuario selecciona un item del inventario, un ghost sigue el mouse sobre los tiles isométricos, verde si válido / rojo si inválido. ESC, clic derecho o "Cancel" cancela. Clic izquierdo en tile válido loguea "Placement coming soon" (no hay backend). No se tocó backend, WebSocket, base de datos, inventario ni movement/chat.
+
+### Archivos Modificados
+
+- **`frontend/src/components/inventory/InventoryItemCard.tsx`**: Prop `onPlace?: (item) => void`. Cuando se pasa: renderiza botón "Place" verde habilitado (`.inventory-place-action`). Sin prop: botón gris disabled igual que antes.
+- **`frontend/src/components/inventory/InventoryPanel.tsx`**: Prop `onPlace?` threadada a cada card.
+- **`frontend/src/game/scenes/RoomScene.ts`**:
+  - Nuevos campos privados: `placementItem`, `ghostLayer`, `ghostGraphics`, `ghostSprite`, `ghostCurrentTile`, `onExitPlacementModeCallback`.
+  - `enterPlacementMode(item, onExit?)` — público. Crea ghost container (depth 40): Graphics para footprint diamonds + Image si la textura existe en Phaser cache.
+  - `exitPlacementMode()` — público (llamado desde React, NO dispara callback).
+  - `exitPlacementModeInternal(notifyReact)` — privado. Destruye ghost layer, limpia estado.
+  - `update(_time, _delta)` — override Phaser lifecycle. Lee `input.activePointer`, convierte a tile via `isoToGrid`, llama `redrawGhost` si el tile cambió.
+  - `redrawGhost(tile)` — dibuja diamonds de footprint (verde/rojo) + posiciona sprite ghost con `setTint`.
+  - `isValidPlacementAt(tile)` — todos los tiles del footprint deben estar en `existingTileKeySet`, `walkableTileKeySet` y fuera de `blockedTileKeys`, con `quantity > 0`.
+  - `handleEscKey()` — listener `keydown-ESC`, cancela placement notificando React.
+  - `handlePlacementPointerDown()` — clic derecho cancela; clic izquierdo en tile válido loguea y cancela.
+  - `handlePointerDown` modificado: si `placementItem !== null`, delega a `handlePlacementPointerDown` y retorna.
+  - `handleShutdown` actualizado para limpiar ghost state.
+- **`frontend/src/game/PhaserRoom.tsx`**: `PhaserRoomHandle` extendido con `enterPlacementMode(item)` / `exitPlacementMode()`. Prop `onPlacementCancel?: () => void`. `useImperativeHandle` actualizado.
+- **`frontend/src/pages/RoomPage.tsx`**: Estado `selectedPlacementItem`. Callbacks `handlePlaceItem` / `handleCancelPlacement`. Banner `.placement-banner` absoluto (top center sobre game area) cuando hay item seleccionado. `InventoryPanel` recibe `onPlace`. `PhaserRoom` recibe `onPlacementCancel`.
+- **`frontend/src/styles.css`**: `.inventory-place-action` (verde retro), `.placement-banner` + `.placement-banner-cancel`.
+
+### Ghost Sprite Logic
+
+La textura del sprite es buscada con `FURNITURE_CATALOG_BY_ID.get(item.code)` y `this.textures.exists(catalogItem.spriteKey)`. Si existe: se crea un `Phaser.GameObjects.Image` con alpha 0.72 y se posiciona calculando el anchorPoint inline (replica la lógica de `furnitureRenderGeometry`/`spriteAnchorPoint` sin exportarlas). Si no existe: solo footprint diamonds.
+
+### Resultado de Build
+
+```
+npm run build: ✓ 1610 modules, built in 11.35s (sin errores TypeScript)
+```
+
+### Restricciones confirmadas
+
+No se creó endpoint backend. No se modifica DB. No se coloca furniture realmente. No se descuenta inventario. No se envía WebSocket. Solo preview visual frontend.
+
+---
+
+## 2026-06-06 (FASE 4B.1 — Inventory UI)
+
+### Change Summary
+
+UI de inventario básico en RoomPage. Solo visualización — no se implementó placement, drag/drop, ni marketplace. No se tocó backend, WebSocket, movement ni chat.
+
+### Archivos Creados
+
+- `frontend/src/components/inventory/InventoryPanel.tsx` — panel flotante retro (`.habbo-window`). Estados: loading / loaded / error / empty. Carga desde `GET /api/me/inventory` al abrirse, result cacheado mientras el panel esté abierto. Se cierra con botón X en header.
+- `frontend/src/components/inventory/InventoryItemCard.tsx` — card por item: preview sprite 60px (pixelated, fallback "?" en error de carga), nombre, code·dimensiones, badges (SEAT/WALKABLE/TRADEABLE/BLOCKS), botón "Place" disabled con tooltip "Coming soon".
+
+### Archivos Modificados
+
+- `frontend/src/pages/RoomPage.tsx`:
+  - Import `InventoryPanel`.
+  - Estado `inventoryOpen` (boolean, false por defecto).
+  - Botón `inventory-toggle` en toolbar (visible cuando `room` está cargada, activo/resaltado cuando panel está abierto).
+  - Panel se renderiza absolutamente sobre `room-content` cuando `inventoryOpen && token`.
+- `frontend/src/styles.css`:
+  - `.room-content { position: relative }` — base para panel absoluto.
+  - `.room-toolbar-actions` — wrapper flex para botón + status pill.
+  - `.inventory-toggle` / `.inventory-toggle.active` — botón estilo retro azul.
+  - `.inventory-panel` — overlay flotante bottom-left del game area (z-index: 100).
+  - `.inventory-panel-body` — cuerpo scrollable con fondo claro retro.
+  - `.inventory-item-card`, `.inventory-preview`, `.inventory-qty`, `.inventory-item-meta`, `.inventory-item-name`, `.inventory-item-sub` — card grid layout.
+  - `.inventory-badges`, `.inventory-badge`, `.badge-seat/walkable/tradeable/blocks` — badges de metadata.
+  - `.inventory-disabled-action` — botón Place deshabilitado (gris, cursor not-allowed).
+  - Responsive mobile (`max-width: 860px`): panel ocupa ancho completo − 16px márgenes.
+
+### Endpoint usado
+
+`GET /api/me/inventory` — requiere JWT. Devuelve `InventoryResponse { items: InventoryItem[] }`.
+
+### Resultado de Build
+
+```
+npm run build: ✓ 1608 modules, built in 14.06s (sin errores TypeScript)
+```
+
+### Restricciones confirmadas
+
+No se implementó: placement, drag/drop, marketplace, FASE 4C. Solo visualización.
+
+---
+
 ## 2026-06-05 23:57:53 -04:00 (FASE 4B - Inventory Basico)
 
 ### Change Summary

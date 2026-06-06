@@ -9,8 +9,10 @@ import {
 import { RoomScene } from './scenes/RoomScene';
 import type {
   GridPosition,
+  InventoryItem,
   PresenceUser,
   Room,
+  RoomFurniture,
   RoomServerEvent,
   User,
 } from '../types/api.types';
@@ -20,6 +22,8 @@ interface PhaserRoomProps {
   currentUser: User;
   presence: PresenceUser[];
   onMoveRequest: (position: GridPosition) => void;
+  onPlacementCancel?: () => void;
+  onPlacementConfirm?: (item: InventoryItem, x: number, y: number, rotation: string) => void;
 }
 
 interface PendingChatBubble {
@@ -31,10 +35,14 @@ export interface PhaserRoomHandle {
   applyEvent: (event: RoomServerEvent) => void;
   setPresence: (presence: PresenceUser[]) => void;
   showChatBubble: (userId: number, message: string) => void;
+  enterPlacementMode: (item: InventoryItem) => void;
+  exitPlacementMode: () => void;
+  setPlacementPending: (pending: boolean) => void;
+  addFurnitureInstance: (furniture: RoomFurniture) => void;
 }
 
 export const PhaserRoom = forwardRef<PhaserRoomHandle, PhaserRoomProps>(function PhaserRoom(
-  { currentUser, onMoveRequest, presence, room },
+  { currentUser, onMoveRequest, onPlacementCancel, onPlacementConfirm, presence, room },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -159,7 +167,23 @@ export const PhaserRoom = forwardRef<PhaserRoomHandle, PhaserRoomProps>(function
     showChatBubble(userId: number, message: string) {
       showChatBubbleWhenReady(userId, message);
     },
-  }), [applyEventWhenReady, setPresenceWhenReady, showChatBubbleWhenReady]);
+    enterPlacementMode(item: InventoryItem) {
+      sceneRef.current?.enterPlacementMode(
+        item,
+        onPlacementCancel,
+        onPlacementConfirm ? (x, y, rotation) => onPlacementConfirm(item, x, y, rotation) : undefined,
+      );
+    },
+    exitPlacementMode() {
+      sceneRef.current?.exitPlacementMode();
+    },
+    setPlacementPending(pending: boolean) {
+      sceneRef.current?.setPlacementPending(pending);
+    },
+    addFurnitureInstance(furniture: RoomFurniture) {
+      sceneRef.current?.addFurnitureInstance(furniture);
+    },
+  }), [applyEventWhenReady, onPlacementCancel, onPlacementConfirm, setPresenceWhenReady, showChatBubbleWhenReady]);
 
   return <div aria-label={`${room.name} isometric room`} className="phaser-room" ref={containerRef} />;
 });

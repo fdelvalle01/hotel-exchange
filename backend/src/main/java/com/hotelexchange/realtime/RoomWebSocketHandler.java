@@ -114,7 +114,7 @@ public class RoomWebSocketHandler extends TextWebSocketHandler {
                 case ROOM_LEAVE -> session.close(CloseStatus.NORMAL);
                 case USER_MOVED -> handleUserMoved(session, inboundEvent.payload());
                 case CHAT_MESSAGE -> handleChatMessage(session, inboundEvent.payload());
-                case PRESENCE_UPDATE, ERROR -> sendError(session, "Unsupported client event type");
+                case PRESENCE_UPDATE, ROOM_FURNITURE_ADDED, ERROR -> sendError(session, "Unsupported client event type");
             }
         } catch (IllegalArgumentException exception) {
             sendError(session, "Invalid room event payload");

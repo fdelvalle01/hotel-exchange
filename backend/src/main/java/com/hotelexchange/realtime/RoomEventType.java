@@ -6,5 +6,6 @@ public enum RoomEventType {
     USER_MOVED,
     CHAT_MESSAGE,
     PRESENCE_UPDATE,
+    ROOM_FURNITURE_ADDED,
     ERROR
 }

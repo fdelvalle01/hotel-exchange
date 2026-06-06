@@ -60,7 +60,7 @@ INSERT INTO furniture_catalog (
 VALUES
     (
         'green_leather_sofa',
-        'Green Leather Sofa',
+        '120px Classic Lounge Sofa',
         'FLOOR',
         'furniture_green_leather_sofa',
         '/assets/furniture/green_leather_sofa.png',

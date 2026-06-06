@@ -31,6 +31,27 @@ public class RoomFurnitureEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    protected RoomFurnitureEntity() {
+    }
+
+    public RoomFurnitureEntity(
+            RoomEntity room,
+            FurnitureCatalogEntity catalogItem,
+            UserEntity ownerUser,
+            int x,
+            int y,
+            BigDecimal z,
+            String rotation
+    ) {
+        this.room = room;
+        this.catalogItem = catalogItem;
+        this.ownerUser = ownerUser;
+        this.x = x;
+        this.y = y;
+        this.z = z != null ? z : BigDecimal.ZERO;
+        this.rotation = rotation != null ? rotation : "SE";
+    }
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "room_id", nullable = false)
     private RoomEntity room;

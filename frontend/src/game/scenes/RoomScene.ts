@@ -2,7 +2,9 @@ import Phaser from 'phaser';
 import type {
   ChatPayload,
   GridPosition,
+  InventoryItem,
   PresenceUser,
+  RoomFurniture,
   RoomServerEvent,
   UserMovedPayload,
 } from '../../types/api.types';
@@ -20,7 +22,7 @@ import {
   mainLobbyFurnitureInstances,
   type StaticFurnitureInstance,
 } from '../data/mainLobbyFurniture';
-import { FURNITURE_CATALOG_BY_ID } from '../data/furnitureCatalog';
+import { FURNITURE_CATALOG_BY_ID, type FurnitureRotation } from '../data/furnitureCatalog';
 import {
   preloadFurnitureSprites,
   renderFurnitureSprites,
@@ -64,6 +66,7 @@ export class RoomScene extends Phaser.Scene {
   private readonly serverBlockedTileKeys: Set<string>;
   private readonly decorativeBlockedTileKeys: Set<string>;
   private readonly blockedTileKeys: Set<string>;
+  private readonly addedFurnitureIds: Set<number>;
   private readonly pendingSceneEvents: PendingSceneEvent[] = [];
   private readonly pendingChatBubblesByUser = new Map<number, string>();
   private floorLayer: Phaser.GameObjects.Container | null = null;
@@ -76,6 +79,16 @@ export class RoomScene extends Phaser.Scene {
   private selectedHighlight: Phaser.GameObjects.Polygon | null = null;
   private sceneReady = false;
 
+  // Placement preview state
+  private placementItem: InventoryItem | null = null;
+  private placementPending = false;
+  private ghostLayer: Phaser.GameObjects.Container | null = null;
+  private ghostGraphics: Phaser.GameObjects.Graphics | null = null;
+  private ghostSprite: Phaser.GameObjects.Image | null = null;
+  private ghostCurrentTile: GridPosition | null = null;
+  private onExitPlacementModeCallback: (() => void) | null = null;
+  private onConfirmPlacementCallback: ((x: number, y: number, rotation: string) => void) | null = null;
+
   // Floor map state — populated from room.model if available
   private decodedTiles: RoomTileView[] | null = null;
   private existingTileKeySet: Set<string> | null = null;
@@ -84,6 +97,7 @@ export class RoomScene extends Phaser.Scene {
   constructor(private readonly options: RoomSceneOptions) {
     super('RoomScene');
     this.furnitureInstances = mainLobbyFurnitureInstances(options.room);
+    this.addedFurnitureIds = new Set((options.room.furniture ?? []).map((f) => f.id));
     this.serverBlockedTileKeys = new Set(
       (options.room.blockedTiles ?? []).map((position) => this.tileKey(position)),
     );
@@ -108,6 +122,7 @@ export class RoomScene extends Phaser.Scene {
     this.createLayers();
     this.drawFloor();
     this.input.on('pointerdown', this.handlePointerDown, this);
+    this.input.keyboard?.on('keydown-ESC', this.handleEscKey, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
     this.sceneReady = true;
     this.processPendingSceneEvents();
@@ -440,6 +455,12 @@ export class RoomScene extends Phaser.Scene {
   }
 
   private handlePointerDown(pointer: Phaser.Input.Pointer) {
+    if (this.placementPending) return;
+    if (this.placementItem) {
+      this.handlePlacementPointerDown(pointer);
+      return;
+    }
+
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const position = isoToGrid(worldPoint.x, worldPoint.y, this.origin);
 
@@ -736,6 +757,7 @@ export class RoomScene extends Phaser.Scene {
     this.pendingChatBubblesByUser.clear();
     this.avatars.clear();
     this.tiles.clear();
+    this.exitPlacementModeInternal(false);
     this.floorLayer = null;
     this.highlightLayer = null;
     this.decorationLayer = null;
@@ -769,6 +791,233 @@ export class RoomScene extends Phaser.Scene {
 
     const hash = Math.abs((position.x * 17 + position.y * 29 + position.x * position.y * 7) % FLOOR_TILE_COLORS.length);
     return FLOOR_TILE_COLORS[hash];
+  }
+
+  // ─── Placement Preview ───────────────────────────────────────────────────
+
+  override update(_time: number, _delta: number) {
+    if (!this.placementItem || !this.ghostGraphics) return;
+
+    const pointer = this.input.activePointer;
+    const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const tile = isoToGrid(worldPoint.x, worldPoint.y, this.origin);
+
+    const prev = this.ghostCurrentTile;
+    if (prev && prev.x === tile.x && prev.y === tile.y) return;
+    this.ghostCurrentTile = tile;
+    this.redrawGhost(tile);
+  }
+
+  enterPlacementMode(
+    item: InventoryItem,
+    onExit?: () => void,
+    onConfirm?: (x: number, y: number, rotation: string) => void,
+  ) {
+    this.exitPlacementModeInternal(false);
+    this.placementItem = item;
+    this.onExitPlacementModeCallback = onExit ?? null;
+    this.onConfirmPlacementCallback = onConfirm ?? null;
+
+    this.ghostLayer = this.add.container(0, 0).setDepth(40);
+    this.ghostGraphics = this.add.graphics();
+    this.ghostLayer.add(this.ghostGraphics);
+
+    const catalogItem = FURNITURE_CATALOG_BY_ID.get(item.code);
+    if (catalogItem && this.textures.exists(catalogItem.spriteKey)) {
+      this.ghostSprite = this.add.image(0, 0, catalogItem.spriteKey);
+      this.ghostSprite.setAlpha(0.72);
+      this.ghostSprite.setOrigin(catalogItem.originX, catalogItem.originY);
+      this.ghostSprite.setScale(catalogItem.scale ?? 1);
+      this.ghostLayer.add(this.ghostSprite);
+    }
+
+    this.ghostCurrentTile = null;
+  }
+
+  exitPlacementMode() {
+    this.exitPlacementModeInternal(false);
+  }
+
+  setPlacementPending(pending: boolean) {
+    this.placementPending = pending;
+  }
+
+  addFurnitureInstance(furniture: RoomFurniture) {
+    if (this.addedFurnitureIds.has(furniture.id)) return;
+    this.addedFurnitureIds.add(furniture.id);
+
+    const instance: StaticFurnitureInstance = {
+      id: `room-furniture-${furniture.id}`,
+      catalogId: furniture.catalogCode,
+      x: furniture.x,
+      y: furniture.y,
+      rotation: this.normalizeRotation(furniture.rotation),
+      width: furniture.width,
+      height: furniture.height,
+      blocksMovement: furniture.blocksMovement,
+    };
+
+    this.furnitureInstances.push(instance);
+
+    if (furniture.blocksMovement) {
+      for (let dy = 0; dy < furniture.height; dy++) {
+        for (let dx = 0; dx < furniture.width; dx++) {
+          const pos = { x: furniture.x + dx, y: furniture.y + dy };
+          const key = this.tileKey(pos);
+          this.decorativeBlockedTileKeys.add(key);
+          this.blockedTileKeys.add(key);
+          const tileView = this.tiles.get(key);
+          if (tileView && !tileView.blocked) {
+            tileView.blocked = true;
+            tileView.object.disableInteractive();
+            tileView.object.removeListener('pointerover');
+            tileView.object.removeListener('pointerout');
+            this.paintTileByKey(key);
+          }
+        }
+      }
+    }
+
+    if (this.decorationLayer) {
+      const rendered = renderFurnitureSprites(
+        this,
+        [instance],
+        FURNITURE_CATALOG_BY_ID,
+        (x, y) => getTileCenter(x, y, this.origin),
+      );
+      for (const item of rendered) {
+        this.decorationLayer.add(item.object);
+      }
+      this.sortAvatars();
+    }
+  }
+
+  private normalizeRotation(rotation: string): FurnitureRotation {
+    const normalized = rotation.toUpperCase();
+    if (normalized === 'NE' || normalized === 'NW' || normalized === 'SE' || normalized === 'SW') {
+      return normalized as FurnitureRotation;
+    }
+    return 'SE';
+  }
+
+  private exitPlacementModeInternal(notifyReact: boolean) {
+    if (!this.placementItem) return;
+    this.placementItem = null;
+    this.placementPending = false;
+    this.ghostCurrentTile = null;
+    this.onConfirmPlacementCallback = null;
+
+    if (this.ghostLayer) {
+      this.ghostLayer.destroy(true);
+      this.ghostLayer = null;
+      this.ghostGraphics = null;
+      this.ghostSprite = null;
+    }
+
+    const cb = this.onExitPlacementModeCallback;
+    this.onExitPlacementModeCallback = null;
+    if (notifyReact) cb?.();
+  }
+
+  private handleEscKey() {
+    if (this.placementItem) {
+      this.exitPlacementModeInternal(true);
+    }
+  }
+
+  private handlePlacementPointerDown(pointer: Phaser.Input.Pointer) {
+    if (pointer.rightButtonDown()) {
+      this.exitPlacementModeInternal(true);
+      return;
+    }
+
+    const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const tile = isoToGrid(worldPoint.x, worldPoint.y, this.origin);
+
+    if (this.isValidPlacementAt(tile) && this.placementItem) {
+      if (this.onConfirmPlacementCallback) {
+        // Freeze input and wait for React to call exitPlacementMode after REST completes
+        this.placementPending = true;
+        this.onConfirmPlacementCallback(tile.x, tile.y, 'SE');
+      } else {
+        this.exitPlacementModeInternal(true);
+      }
+    }
+  }
+
+  private getGhostFootprintTiles(anchorX: number, anchorY: number): GridPosition[] {
+    const item = this.placementItem;
+    if (!item) return [];
+    const tiles: GridPosition[] = [];
+    for (let dy = 0; dy < item.height; dy++) {
+      for (let dx = 0; dx < item.width; dx++) {
+        tiles.push({ x: anchorX + dx, y: anchorY + dy });
+      }
+    }
+    return tiles;
+  }
+
+  private isValidPlacementAt(tile: GridPosition): boolean {
+    const item = this.placementItem;
+    if (!item || item.quantity <= 0) return false;
+
+    const footprint = this.getGhostFootprintTiles(tile.x, tile.y);
+    return footprint.every((ft) => {
+      const key = this.tileKey(ft);
+      const exists = this.existingTileKeySet
+        ? this.existingTileKeySet.has(key)
+        : this.isInsideRoom(ft);
+      const walkable = this.walkableTileKeySet
+        ? this.walkableTileKeySet.has(key)
+        : true;
+      return exists && walkable && !this.blockedTileKeys.has(key);
+    });
+  }
+
+  private redrawGhost(tile: GridPosition) {
+    const graphics = this.ghostGraphics;
+    const item = this.placementItem;
+    if (!graphics || !item) return;
+
+    graphics.clear();
+
+    const footprint = this.getGhostFootprintTiles(tile.x, tile.y);
+    const valid = this.isValidPlacementAt(tile);
+    const fillColor = valid ? 0x00aa44 : 0xaa1111;
+    const strokeColor = valid ? 0x00ff66 : 0xff3333;
+
+    for (const ft of footprint) {
+      const center = getTileCenter(ft.x, ft.y, this.origin);
+      graphics.fillStyle(fillColor, 0.28);
+      graphics.beginPath();
+      graphics.moveTo(center.x, center.y - TILE_HEIGHT / 2);
+      graphics.lineTo(center.x + TILE_WIDTH / 2, center.y);
+      graphics.lineTo(center.x, center.y + TILE_HEIGHT / 2);
+      graphics.lineTo(center.x - TILE_WIDTH / 2, center.y);
+      graphics.closePath();
+      graphics.fillPath();
+      graphics.lineStyle(1, strokeColor, 0.65);
+      graphics.strokePoints([
+        { x: center.x, y: center.y - TILE_HEIGHT / 2 },
+        { x: center.x + TILE_WIDTH / 2, y: center.y },
+        { x: center.x, y: center.y + TILE_HEIGHT / 2 },
+        { x: center.x - TILE_WIDTH / 2, y: center.y },
+      ], true);
+    }
+
+    if (this.ghostSprite) {
+      const catalogItem = FURNITURE_CATALOG_BY_ID.get(item.code);
+      if (catalogItem) {
+        const anchorGridX = tile.x + (catalogItem.anchorOffsetX ?? (item.width - 1) / 2);
+        const anchorGridY = tile.y + (catalogItem.anchorOffsetY ?? (item.height - 1) / 2);
+        const anchorPoint = getTileCenter(anchorGridX, anchorGridY, this.origin);
+        this.ghostSprite.setPosition(
+          anchorPoint.x + (catalogItem.renderOffsetX ?? 0),
+          anchorPoint.y + (catalogItem.renderOffsetY ?? 0),
+        );
+        this.ghostSprite.setTint(valid ? 0x88ff88 : 0xff8888);
+      }
+    }
   }
 
 }

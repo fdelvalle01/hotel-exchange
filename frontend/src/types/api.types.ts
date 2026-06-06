@@ -147,7 +147,26 @@ export type RoomEventType =
   | 'USER_MOVED'
   | 'CHAT_MESSAGE'
   | 'PRESENCE_UPDATE'
+  | 'ROOM_FURNITURE_ADDED'
   | 'ERROR';
+
+export interface PlaceFurnitureRequest {
+  catalogCode: string;
+  x: number;
+  y: number;
+  rotation: string;
+}
+
+export interface PlaceFurnitureResponse {
+  placedFurniture: RoomFurniture;
+  updatedInventoryItem: InventoryItem | null;
+}
+
+export interface FurnitureAddedPayload {
+  furniture: RoomFurniture;
+  placedByUserId: number;
+  placedByUsername: string;
+}
 
 export interface RoomServerEvent {
   type: RoomEventType;

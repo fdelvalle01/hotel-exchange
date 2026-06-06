@@ -17,4 +17,14 @@ public interface UserInventoryRepository extends JpaRepository<UserInventoryEnti
     List<UserInventoryEntity> findInventoryForUser(@Param("userId") Long userId);
 
     boolean existsByUser_IdAndCatalogItem_Id(Long userId, Long catalogItemId);
+
+    @Query("""
+            select i from UserInventoryEntity i
+            join fetch i.catalogItem
+            where i.user.id = :userId and i.catalogItem.id = :catalogItemId
+            """)
+    java.util.Optional<UserInventoryEntity> findInventoryItemForUserAndCatalog(
+            @Param("userId") Long userId,
+            @Param("catalogItemId") Long catalogItemId
+    );
 }
