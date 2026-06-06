@@ -13,6 +13,9 @@ import com.hotelexchange.room.RoomBlockedTileEntity;
 import com.hotelexchange.room.RoomBlockedTileRepository;
 import com.hotelexchange.room.RoomEntity;
 import com.hotelexchange.room.RoomLayoutService;
+import com.hotelexchange.room.RoomModelEntity;
+import com.hotelexchange.room.RoomModelRepository;
+import com.hotelexchange.room.RoomModelService;
 import com.hotelexchange.room.UserRoomStateEntity;
 import com.hotelexchange.room.UserRoomStateRepository;
 import com.hotelexchange.user.UserEntity;
@@ -39,11 +42,19 @@ class RoomStateServiceTest {
     @Mock
     private RoomFurnitureService roomFurnitureService;
 
+    @Mock
+    private RoomModelRepository roomModelRepository;
+
     private RoomStateService roomStateService;
 
     @BeforeEach
     void setUp() {
-        RoomLayoutService roomLayoutService = new RoomLayoutService(blockedTileRepository, roomFurnitureService);
+        RoomModelService roomModelService = new RoomModelService(roomModelRepository);
+        RoomLayoutService roomLayoutService = new RoomLayoutService(
+                blockedTileRepository,
+                roomModelService,
+                roomFurnitureService
+        );
         roomStateService = new RoomStateService(
                 userRoomStateRepository,
                 roomLayoutService,
@@ -102,6 +113,99 @@ class RoomStateServiceTest {
     }
 
     @Test
+    void movementToVoidModelTileIsRejected() {
+        RoomEntity room = roomWithModel(1L, 3, 2, "test_model");
+        RoomModelEntity model = model("test_model", 3, 2, "0x0\n000", 0, 0);
+        UserEntity user = user(1L, "trader");
+        when(roomModelRepository.findByCode("test_model")).thenReturn(Optional.of(model));
+        when(blockedTileRepository.findByRoom_Id(1L)).thenReturn(List.of());
+        noFurnitureBlockers(room);
+
+        assertThatThrownBy(() -> roomStateService.persistMovement(room, user, new GridPosition(0, 0), new MovePayload(1, 0, "east")))
+                .isInstanceOf(BadRoomEventException.class)
+                .hasMessageContaining("Tile does not exist");
+
+        verify(userRoomStateRepository, never()).save(any());
+    }
+
+    @Test
+    void movementToStructuralModelTileIsRejected() {
+        RoomEntity room = roomWithModel(1L, 3, 2, "test_model");
+        RoomModelEntity model = model("test_model", 3, 2, "0b0\n000", 0, 0);
+        UserEntity user = user(1L, "trader");
+        when(roomModelRepository.findByCode("test_model")).thenReturn(Optional.of(model));
+        when(blockedTileRepository.findByRoom_Id(1L)).thenReturn(List.of());
+        noFurnitureBlockers(room);
+
+        assertThatThrownBy(() -> roomStateService.persistMovement(room, user, new GridPosition(0, 0), new MovePayload(1, 0, "east")))
+                .isInstanceOf(BadRoomEventException.class)
+                .hasMessageContaining("Tile is structurally blocked");
+
+        verify(userRoomStateRepository, never()).save(any());
+    }
+
+    @Test
+    void movementToHeightTileIsAllowedForNow() {
+        RoomEntity room = roomWithModel(1L, 3, 2, "test_model");
+        RoomModelEntity model = model("test_model", 3, 2, "010\n000", 0, 0);
+        UserEntity user = user(1L, "trader");
+        when(roomModelRepository.findByCode("test_model")).thenReturn(Optional.of(model));
+        when(blockedTileRepository.findByRoom_Id(1L)).thenReturn(List.of());
+        noFurnitureBlockers(room);
+        when(userRoomStateRepository.findByRoom_IdAndUser_Id(1L, 1L)).thenReturn(Optional.empty());
+        when(userRoomStateRepository.save(any(UserRoomStateEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MovementResult movement = roomStateService.persistMovement(room, user, new GridPosition(0, 0), new MovePayload(1, 0, "east"));
+
+        assertThat(movement.position()).isEqualTo(new GridPosition(1, 0));
+        assertThat(movement.path()).containsExactly(new GridPosition(1, 0));
+    }
+
+    @Test
+    void pathfindingAvoidsVoidTiles() {
+        RoomEntity room = roomWithModel(1L, 3, 2, "test_model");
+        RoomModelEntity model = model("test_model", 3, 2, "0x0\n000", 0, 0);
+        UserEntity user = user(1L, "trader");
+        when(roomModelRepository.findByCode("test_model")).thenReturn(Optional.of(model));
+        when(blockedTileRepository.findByRoom_Id(1L)).thenReturn(List.of());
+        noFurnitureBlockers(room);
+        when(userRoomStateRepository.findByRoom_IdAndUser_Id(1L, 1L)).thenReturn(Optional.empty());
+        when(userRoomStateRepository.save(any(UserRoomStateEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MovementResult movement = roomStateService.persistMovement(room, user, new GridPosition(0, 0), new MovePayload(2, 0, "east"));
+
+        assertThat(movement.path()).doesNotContain(new GridPosition(1, 0));
+        assertThat(movement.path()).containsExactly(
+                new GridPosition(0, 1),
+                new GridPosition(1, 1),
+                new GridPosition(2, 1),
+                new GridPosition(2, 0)
+        );
+    }
+
+    @Test
+    void pathfindingAvoidsStructuralBlockedTiles() {
+        RoomEntity room = roomWithModel(1L, 3, 2, "test_model");
+        RoomModelEntity model = model("test_model", 3, 2, "0b0\n000", 0, 0);
+        UserEntity user = user(1L, "trader");
+        when(roomModelRepository.findByCode("test_model")).thenReturn(Optional.of(model));
+        when(blockedTileRepository.findByRoom_Id(1L)).thenReturn(List.of());
+        noFurnitureBlockers(room);
+        when(userRoomStateRepository.findByRoom_IdAndUser_Id(1L, 1L)).thenReturn(Optional.empty());
+        when(userRoomStateRepository.save(any(UserRoomStateEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MovementResult movement = roomStateService.persistMovement(room, user, new GridPosition(0, 0), new MovePayload(2, 0, "east"));
+
+        assertThat(movement.path()).doesNotContain(new GridPosition(1, 0));
+        assertThat(movement.path()).containsExactly(
+                new GridPosition(0, 1),
+                new GridPosition(1, 1),
+                new GridPosition(2, 1),
+                new GridPosition(2, 0)
+        );
+    }
+
+    @Test
     void movementToFurnitureBlockedTileIsRejectedWithClearMessage() {
         RoomEntity room = room(1L, 12, 12);
         UserEntity user = user(1L, "trader");
@@ -117,6 +221,39 @@ class RoomStateServiceTest {
         verify(userRoomStateRepository, never()).save(any());
     }
 
+    @Test
+    void roomWithoutModelCodeKeepsRectangularFallback() {
+        RoomEntity room = room(1L, 3, 3);
+        UserEntity user = user(1L, "trader");
+        when(blockedTileRepository.findByRoom_Id(1L)).thenReturn(List.of());
+        noFurnitureBlockers(room);
+        when(userRoomStateRepository.findByRoom_IdAndUser_Id(1L, 1L)).thenReturn(Optional.empty());
+        when(userRoomStateRepository.save(any(UserRoomStateEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MovementResult movement = roomStateService.persistMovement(room, user, new GridPosition(0, 0), new MovePayload(2, 2, "south"));
+
+        assertThat(movement.position()).isEqualTo(new GridPosition(2, 2));
+        assertThat(movement.path()).isNotEmpty();
+    }
+
+    @Test
+    void joinStateUsesRoomModelSpawnAndDirectionWhenNoSavedStateExists() {
+        RoomEntity room = roomWithModel(1L, 4, 4, "test_model");
+        RoomModelEntity model = model("test_model", 4, 4, "0000\n0000\n0000\n0000", 2, 3);
+        UserEntity user = user(1L, "trader");
+        when(roomModelRepository.findByCode("test_model")).thenReturn(Optional.of(model));
+        when(blockedTileRepository.findByRoom_Id(1L)).thenReturn(List.of());
+        noFurnitureBlockers(room);
+        when(userRoomStateRepository.findByRoom_IdAndUser_Id(1L, 1L)).thenReturn(Optional.empty());
+        when(userRoomStateRepository.save(any(UserRoomStateEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        ReflectionTestUtils.setField(model, "spawnDirection", "north");
+
+        RoomStateSnapshot snapshot = roomStateService.resolveJoinState(room, user);
+
+        assertThat(snapshot.position()).isEqualTo(new GridPosition(2, 3));
+        assertThat(snapshot.direction()).isEqualTo("north");
+    }
+
     private RoomEntity room(Long id, int width, int height) {
         RoomEntity room = new RoomEntity();
         ReflectionTestUtils.setField(room, "id", id);
@@ -126,6 +263,27 @@ class RoomStateServiceTest {
         ReflectionTestUtils.setField(room, "spawnX", 1);
         ReflectionTestUtils.setField(room, "spawnY", 1);
         return room;
+    }
+
+    private RoomEntity roomWithModel(Long id, int width, int height, String modelCode) {
+        RoomEntity room = room(id, width, height);
+        ReflectionTestUtils.setField(room, "modelCode", modelCode);
+        return room;
+    }
+
+    private RoomModelEntity model(String code, int width, int height, String floorMap, int spawnX, int spawnY) {
+        RoomModelEntity entity = new RoomModelEntity();
+        ReflectionTestUtils.setField(entity, "code", code);
+        ReflectionTestUtils.setField(entity, "width", width);
+        ReflectionTestUtils.setField(entity, "height", height);
+        ReflectionTestUtils.setField(entity, "floorMap", floorMap);
+        ReflectionTestUtils.setField(entity, "spawnX", spawnX);
+        ReflectionTestUtils.setField(entity, "spawnY", spawnY);
+        ReflectionTestUtils.setField(entity, "wallMode", "STANDARD");
+        ReflectionTestUtils.setField(entity, "wallHeight", 3);
+        ReflectionTestUtils.setField(entity, "spawnDirection", "S");
+        ReflectionTestUtils.setField(entity, "theme", "DEFAULT");
+        return entity;
     }
 
     private RoomBlockedTileEntity blockedTile(int x, int y) {

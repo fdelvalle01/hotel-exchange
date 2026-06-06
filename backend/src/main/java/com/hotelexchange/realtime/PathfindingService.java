@@ -38,6 +38,7 @@ public class PathfindingService {
             return List.of();
         }
 
+        Set<GridPosition> walkableTiles = roomLayoutService.walkableTileSet(room, blockedTiles);
         Queue<GridPosition> frontier = new ArrayDeque<>();
         Map<GridPosition, GridPosition> cameFrom = new HashMap<>();
         frontier.add(start);
@@ -51,7 +52,7 @@ public class PathfindingService {
 
             for (GridPosition direction : DIRECTIONS) {
                 GridPosition next = new GridPosition(current.x() + direction.x(), current.y() + direction.y());
-                if (cameFrom.containsKey(next) || !roomLayoutService.isWalkable(room, next, blockedTiles)) {
+                if (cameFrom.containsKey(next) || !walkableTiles.contains(next)) {
                     continue;
                 }
                 frontier.add(next);

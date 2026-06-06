@@ -563,7 +563,7 @@ export class RoomScene extends Phaser.Scene {
       return;
     }
 
-    this.avatarLayer.sort('y');
+    this.avatarLayer.sort('depth');
   }
 
   private moveAvatar(event: RoomServerEvent) {
@@ -768,11 +768,6 @@ export class RoomScene extends Phaser.Scene {
     }
 
     const hash = Math.abs((position.x * 17 + position.y * 29 + position.x * position.y * 7) % FLOOR_TILE_COLORS.length);
-    const isDeskZone = position.x >= 4 && position.x <= 7 && position.y >= 4 && position.y <= 8;
-    if (isDeskZone) {
-      return (position.x + position.y) % 2 === 0 ? 0x5a3931 : 0x4d332d;
-    }
-
     return FLOOR_TILE_COLORS[hash];
   }
 

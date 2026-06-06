@@ -1,5 +1,18 @@
 # Room Model Gap Analysis
 
+## Status Update - 2026-06-05 22:39:44 -04:00
+
+FASE 4A.2, 4A.3, 4A.4 y 4A.5 ya avanzaron varios puntos de este gap analysis:
+
+- `RoomModel` backend existe y `GET /api/rooms/{id}` expone `model`, `shell`, `modelCode` y spawn efectivo.
+- Frontend renderiza floor/walls desde `floorMap`.
+- Backend valida movimiento contra `x/X`, `b/B`, legacy blockers y furniture.
+- Main Lobby ya no depende de una forma rectangular generica: `V8__main_lobby_composition.sql` define una silueta con entrada frontal.
+- Decoracion exchange principal (`MARKET OPEN`, `EXCHANGE DESK`) paso a ser system furniture persistente con fallback pixel-art local.
+- Sigue pendiente modelar furniture de pared como categoria/render dedicado y mover temas/zonas de piso a datos.
+
+---
+
 Date: 2026-06-05
 Author: AI analysis pass (no code copied from Kepler)
 

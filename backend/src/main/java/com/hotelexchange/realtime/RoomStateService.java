@@ -49,7 +49,12 @@ public class RoomStateService {
                         new GridPosition(state.getX(), state.getY()),
                         sanitizeDirection(state.getDirection())
                 ))
-                .orElseGet(() -> saveState(room, user, defaultPosition(room, blockedTiles), DEFAULT_DIRECTION));
+                .orElseGet(() -> saveState(
+                        room,
+                        user,
+                        defaultPosition(room, blockedTiles),
+                        sanitizeDirection(roomLayoutService.spawnDirection(room))
+                ));
     }
 
     @Transactional
@@ -91,15 +96,16 @@ public class RoomStateService {
     }
 
     private GridPosition defaultPosition(RoomEntity room, Set<GridPosition> blockedTiles) {
-        GridPosition spawn = new GridPosition(room.getSpawnX(), room.getSpawnY());
-        if (roomLayoutService.isWalkable(room, spawn, blockedTiles)) {
+        GridPosition spawn = roomLayoutService.spawnPosition(room);
+        Set<GridPosition> walkableTiles = roomLayoutService.walkableTileSet(room, blockedTiles);
+        if (walkableTiles.contains(spawn)) {
             return spawn;
         }
 
         for (int y = 0; y < room.getHeight(); y += 1) {
             for (int x = 0; x < room.getWidth(); x += 1) {
                 GridPosition candidate = new GridPosition(x, y);
-                if (roomLayoutService.isWalkable(room, candidate, blockedTiles)) {
+                if (walkableTiles.contains(candidate)) {
                     return candidate;
                 }
             }

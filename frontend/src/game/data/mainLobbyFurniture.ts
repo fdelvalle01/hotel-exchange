@@ -53,7 +53,7 @@ export const MAIN_LOBBY_FURNITURE: StaticFurnitureInstance[] = [
   {
     id: 'manager-chair',
     catalogId: 'red_executive_chair',
-    x: 7,
+    x: 8,
     y: 5,
     rotation: 'SE',
   },
@@ -61,14 +61,14 @@ export const MAIN_LOBBY_FURNITURE: StaticFurnitureInstance[] = [
     id: 'waiting-sofa',
     catalogId: 'green_leather_sofa',
     x: 2,
-    y: 7,
+    y: 6,
     rotation: 'SE',
   },
   {
     id: 'exchange-table',
     catalogId: 'dark_wood_coffee_table',
     x: 5,
-    y: 6,
+    y: 7,
     rotation: 'SE',
   },
 ];

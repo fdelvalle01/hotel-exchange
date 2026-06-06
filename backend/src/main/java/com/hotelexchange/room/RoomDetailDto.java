@@ -30,6 +30,8 @@ public record RoomDetailDto(
         RoomModelDto modelDto = null;
         String spawnDirection = null;
         String modelCode = room.getModelCode();
+        int spawnX = room.getSpawnX();
+        int spawnY = room.getSpawnY();
 
         if (roomModel != null) {
             shell = new RoomShellDto(
@@ -40,6 +42,8 @@ public record RoomDetailDto(
             );
             modelDto = RoomModelDto.from(roomModel);
             spawnDirection = roomModel.getSpawnDirection();
+            spawnX = roomModel.getSpawnX();
+            spawnY = roomModel.getSpawnY();
         }
 
         return new RoomDetailDto(
@@ -47,8 +51,8 @@ public record RoomDetailDto(
                 room.getName(),
                 room.getWidth(),
                 room.getHeight(),
-                room.getSpawnX(),
-                room.getSpawnY(),
+                spawnX,
+                spawnY,
                 spawnDirection,
                 modelCode,
                 shell,

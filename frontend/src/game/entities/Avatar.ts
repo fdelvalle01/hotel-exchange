@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { Actor, AvatarMovementState, GridPosition } from '../../types/api.types';
-import { getTileCenter, TILE_WIDTH } from '../utils/isometric';
+import { getTileCenter, TILE_HEIGHT } from '../utils/isometric';
 import type { ScreenPoint } from '../types/game.types';
 
 const STEP_DURATION_MS = 220;
@@ -218,7 +218,7 @@ export class Avatar {
   }
 
   private syncRenderPosition() {
-    this.container.setDepth(this.container.y + TILE_WIDTH);
+    this.container.setDepth(this.container.y + TILE_HEIGHT / 2);
     this.syncBubblePosition();
     this.onSortNeeded();
   }

@@ -1,5 +1,312 @@
 # Hotel Exchange AI Memory
 
+## 2026-06-05 23:16:58 -04:00 (FASE 4A.6 - Furniture Catalog Mapping, Cleanup & Depth Fix)
+
+### Change Summary
+
+Implementada FASE 4A.6 para limpiar Main Lobby, corregir depth sorting de furniture por footprint completo y documentar un mapeo conceptual furnidata-like hacia Hotel Exchange. No se copio codigo, assets ni protocolo de Habbo/Sulake; el documento nuevo es educativo y orientado a metadata propia/licenciada.
+
+Nota Flyway: el pedido mencionaba `V7__main_lobby_furniture_cleanup.sql`, pero el repo ya tenia `V7__simplify_exchange_lobby_floor_map.sql` y `V8__main_lobby_composition.sql`. Se creo `V9__main_lobby_furniture_cleanup.sql` para respetar el orden real de migraciones.
+
+### Furniture Removido de Main Lobby
+
+`V9__main_lobby_furniture_cleanup.sql` remueve de `room_furniture` solo para `room_id = 1` y `owner_user_id IS NULL`:
+
+- `exchange_reception_desk`
+- `market_screen`
+- `exchange_wall_sign`
+- `office_plant`
+- `floor_lamp`
+- `lobby_bench`
+- `exchange_rug`
+
+No se borra del catalogo. Quedan como metadata disponible, pero no instanciada en Main Lobby.
+
+Main Lobby queda con:
+
+- `green_leather_sofa` en `(2,6)`, `width=3`, `height=1`, `blocks_movement=true`, `can_sit=true`
+- `dark_wood_coffee_table` en `(5,7)`, `width=2`, `height=2`, `blocks_movement=true`, `can_sit=false`
+- `red_executive_chair` en `(8,5)`, `width=1`, `height=1`, `blocks_movement=true`, `can_sit=true`
+
+El fallback local `MAIN_LOBBY_FURNITURE` tambien queda reducido a esos tres muebles para evitar que el frontend vuelva a pintar decor extra cuando la API no entregue furniture persistente.
+
+### Depth Sorting
+
+`frontend/src/game/rendering/furnitureSpriteRenderer.ts` ahora calcula depth usando todos los tiles del footprint:
+
+- genera `footprintTiles` desde `x/y + footprintWidth/footprintHeight`
+- convierte cada tile a screen coordinates
+- usa el tile con mayor `screenY` como base visual
+- aplica `depthOffset` y `customDepthOffset`
+
+Esto reemplaza el supuesto de un unico tile base para el depth. La separacion queda:
+
+- footprint logico: tiles que bloquea el furniture
+- sprite render: anchor + `renderOffsetX/renderOffsetY`
+- depth: tile mas frontal/inferior del footprint completo
+
+`RoomScene.sortAvatars()` ahora ordena el world layer compartido por `depth`, no por `y`, para que el `setDepth(...)` de furniture y avatar tenga efecto real dentro del container. `Avatar` ajusta su depth a la base visual del sprite (`y + TILE_HEIGHT / 2`) en vez de un offset excesivo.
+
+### Debug Opcional
+
+Agregado debug de depth por variable de entorno:
+
+```
+VITE_FURNITURE_DEPTH_DEBUG=true
+```
+
+Cuando esta activo, el frontend dibuja footprint tiles, tile base, anchor, maxDepth tile y label con depth. Apagado por defecto no renderiza nada.
+
+### Tests y Footprint Backend
+
+Nuevo test:
+
+- `backend/src/test/java/com/hotelexchange/furniture/RoomFurnitureServiceTest.java`
+  - confirma que `dark_wood_coffee_table` bloquea los 4 tiles de su footprint `2x2`
+  - confirma que rotaciones `NE/SW` intercambian width/height
+  - confirma que furniture `can_walk=true` no bloquea movimiento
+
+`RoomFurnitureService` ya usaba width/height completo y bounds de room para `blockedTileSet`; la prueba deja esa garantia fijada.
+
+### Documentacion
+
+Nuevo documento:
+
+- `docs/FURNIDATA_MAPPING.md`
+
+Explica mapeo conceptual:
+
+- `classname -> furniture_catalog.code`
+- `name -> furniture_catalog.name`
+- `xdim/ydim -> width/height`
+- `canstandon -> can_walk`
+- `cansiton -> can_sit`
+- `allow_trade -> tradeable`
+- `stack_height -> default_z` o futuro `stack_height`
+- `sprite_id/classname -> sprite_key/sprite_path` propios/licenciados
+
+Incluye ejemplo JSON conceptual y seed SQL de ejemplo.
+
+### Validaciones Ejecutadas
+
+```
+mvn test
+Tests run: 39, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+
+npm run build
+1607 modules transformed
+build OK
+```
+
+Vite mantiene el warning esperado de chunk grande por Phaser.
+
+### Pendientes Tecnicos
+
+- Smoke manual con `trader/trader` y `broker/broker` en `/rooms/1`.
+- Confirmar visualmente depth alrededor de mesa/silla/sofa con los sprites reales.
+- Si el avatar queda demasiado delante o detras en algun caso limite, calibrar offsets de depth por tipo de sprite sin tocar blockedTiles.
+- Futuro: persistir `renderOffset`, `depthOffset`, `scale` y `supportedRotations` desde backend para eliminar duplicacion del catalogo frontend.
+
+---
+
+## 2026-06-05 22:50:52 -04:00 (Furniture Sprite Alignment Fix)
+
+### Error Encontrado
+
+Los sprites PNG de furniture no calzaban visualmente con los tiles de ocupacion/blocked footprint. Los tiles cafe representaban bien el footprint logico, pero sofa, mesa y silla se veian corridos respecto al area que bloqueaban.
+
+### Causa Raiz
+
+`furnitureSpriteRenderer` usaba el anchor logico del furniture como punto directo de render. Con sprites `originY=1`, la base visual del PNG quedaba apoyada en el centro del footprint en vez de en su borde sur/frontal. Para furniture multi-tile esto dejaba el sprite visualmente mas al norte/arriba que los tiles bloqueados.
+
+### Archivos Modificados
+
+- `frontend/src/game/rendering/furnitureSpriteRenderer.ts`
+  - Se separo explicitamente `footprintWidth/footprintHeight`, tile base, anchor logico y offset visual.
+  - `spriteDepth` ahora usa el footprint efectivo (`instance.width/height` si viene del backend, fallback al catalogo).
+  - `spriteAnchorPoint` aplica `renderOffsetX/renderOffsetY` sin tocar la ocupacion logica.
+- `frontend/src/game/data/furnitureCatalog.ts`
+  - Agrega `renderOffsetX` y `renderOffsetY` opcionales por furniture.
+  - Ajusta offsets iniciales:
+    - `red_executive_chair`: `renderOffsetY = 16`
+    - `dark_wood_coffee_table`: `renderOffsetY = 32`
+    - `green_leather_sofa`: `renderOffsetY = 32`
+
+### Solucion Aplicada
+
+El footprint sigue siendo la fuente de verdad para blocked tiles y pathfinding. El renderer ahora permite mover solo la imagen del sprite en pixeles para alinear la base visual con los tiles que ocupa. Los offsets actuales corresponden al borde sur del footprint para sprites con `originY=1`: `+16px` en furniture `1x1` y `+32px` en los footprints actuales `2x2`/`3x1`.
+
+### Validaciones Ejecutadas
+
+```
+npm run build
+1607 modules transformed
+build OK
+```
+
+Vite mantiene el warning esperado de chunk grande por Phaser.
+
+### Pendientes Tecnicos
+
+- Smoke manual en `/rooms/1` para confirmar visualmente sofa, mesa y silla contra los tiles cafe.
+- Si un PNG nuevo incluye padding interno distinto, ajustar `renderOffsetX/renderOffsetY` en catalogo sin tocar pathfinding.
+- Futuro: debug visual opcional por flag para mostrar footprint, tile base y anchor del sprite mientras se calibra furniture nuevo.
+
+---
+
+## 2026-06-05 22:39:44 -04:00 (FASE 4A.5 - Main Lobby Composition Pass)
+
+### Change Summary
+
+Implementada FASE 4A.5: Main Lobby ahora tiene una composicion mas intencional usando `RoomModel.floorMap` y furniture persistente. No se implemento inventario, marketplace ni editor de sala. No se copio codigo/assets/protocolo de Habbo o Kepler.
+
+Nota Flyway: el pedido mencionaba `V6__main_lobby_composition.sql`, pero el repo ya tenia `V6__update_exchange_lobby_floor_map.sql` y `V7__simplify_exchange_lobby_floor_map.sql`. Se creo `V8__main_lobby_composition.sql` para mantener el orden correcto de migraciones.
+
+### Nuevo FloorMap
+
+`exchange_lobby_01` queda con una silueta tipo sala/entrada, dejando una entrada frontal clara:
+
+```
+xxxxxxxxxxxx
+xxx000000xxx
+xx00000000xx
+x0000000000x
+000000000000
+000000000000
+000000000000
+000000000000
+x0000000000x
+xx00000000xx
+xxx000000xxx
+xxxx0000xxxx
+```
+
+Spawn actualizado:
+
+- `spawn_x = 6`
+- `spawn_y = 11`
+- `spawn_direction = north`
+
+### Furniture Persistente
+
+`V8__main_lobby_composition.sql` recompone solo system furniture de room 1 con `owner_user_id IS NULL`.
+
+Furniture reubicado:
+
+- `green_leather_sofa` en `(2,6)`
+- `dark_wood_coffee_table` en `(5,7)`
+- `red_executive_chair` en `(8,5)`
+
+System decor agregado:
+
+- `market_screen` en `(3,1)`, `blocksMovement=false`, display MARKET OPEN.
+- `exchange_wall_sign` en `(6,1)`, `blocksMovement=false`, display EXCHANGE DESK.
+- `exchange_reception_desk` en `(4,2)`, `blocksMovement=true`.
+- `office_plant` en `(2,3)`, `blocksMovement=true`.
+- `floor_lamp` en `(9,6)`, `blocksMovement=true`.
+- `lobby_bench` en `(3,8)`, `blocksMovement=true`.
+- `exchange_rug` en `(4,10)`, `blocksMovement=false`, entrada visual.
+
+### Frontend
+
+- `frontend/src/game/data/furnitureCatalog.ts`
+  - Agrega catalogo frontend para los nuevos system decor.
+  - Los PNG no existen aun, por lo que se usan fallbacks pixel-art locales.
+- `frontend/src/game/data/mainLobbyFurniture.ts`
+  - Actualiza fallback local de Main Lobby para coincidir con la nueva composicion persistente.
+- `frontend/src/game/rendering/furnitureRenderer.ts`
+  - Agrega fallbacks `iso-market-screen`, `iso-wall-sign` e `iso-rug`.
+  - Compensa `displayOrigin` en el helper interno de poligonos, igual que el fix aplicado en `RoomScene`.
+- `frontend/src/game/scenes/RoomScene.ts`
+  - Quita la zona de piso hardcodeada tipo desk/trading area. La identidad exchange ahora viene de furniture persistente.
+
+### Backend
+
+- `RoomLayoutService.spawnDirection(room)` expone direccion de spawn del `RoomModel`.
+- `RoomStateService.resolveJoinState(...)` usa `RoomModel.spawnDirection` cuando no existe estado guardado del usuario.
+- `RoomStateServiceTest` agrega cobertura para spawn position + direction desde modelo.
+
+### Validaciones Ejecutadas
+
+```
+mvn test
+Tests run: 36, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+
+npm run build
+1607 modules transformed
+build OK
+```
+
+Vite mantiene el warning esperado de chunk grande por Phaser.
+
+### Pendientes Tecnicos
+
+- Smoke manual con `trader/trader` y `broker/broker` en `/rooms/1`.
+- Agregar PNG propios/licenciados para los nuevos system decor si se quiere reemplazar fallback pixel-art.
+- Futuro: furniture de pared con posicionamiento/depth especifico, en vez de simularlo como floor furniture no bloqueante.
+- Futuro: zonas/temas de piso data-driven para no depender solo de colores hash.
+
+---
+
+## 2026-06-05 22:29:22 -04:00 (FASE 4A.4 - Movement Validation con Structural Blockers)
+
+### Change Summary
+
+Implementada FASE 4A.4: el backend ahora valida movimiento usando `RoomModel/floorMap` como fuente de verdad estructural. El cliente sigue proponiendo solo el destino, pero el backend decide si el tile existe, si es estructuralmente caminable, si esta bloqueado por legacy blockers o si esta bloqueado por furniture antes de persistir y emitir `USER_MOVED`.
+
+### Archivos Modificados
+
+- `backend/src/main/java/com/hotelexchange/room/RoomLayoutService.java`
+  - Inyecta `RoomModelService`.
+  - Agrega `tileExists(room, x, y)`.
+  - Agrega `isStructurallyWalkable(room, x, y)`.
+  - Agrega `isStructurallyBlocked(room, x, y)`.
+  - Agrega `isFurnitureBlocked(room, x, y)`.
+  - Agrega `walkableTileSet(room, blockedTiles)` para pathfinding eficiente.
+  - Agrega `spawnPosition(room)` con fallback: `RoomModel.spawnX/spawnY` si existe modelo; `RoomEntity.spawnX/spawnY` si no existe modelo.
+  - `validateWalkableDestination` ahora valida en orden: bounds basico, tile existe, walkability estructural, legacy blocker, furniture blocker.
+- `backend/src/main/java/com/hotelexchange/realtime/PathfindingService.java`
+  - BFS calcula una vez el set de tiles caminables desde `RoomLayoutService.walkableTileSet(...)`.
+  - Evita `x/X`, `b/B`, legacy blockers y furniture blockers.
+- `backend/src/main/java/com/hotelexchange/realtime/RoomStateService.java`
+  - Join/default spawn usa el spawn efectivo del modelo cuando `modelCode` existe.
+  - Fallback rectangular se mantiene para rooms sin modelo.
+- `backend/src/main/java/com/hotelexchange/room/RoomDetailDto.java`
+  - `spawnX/spawnY` del API ahora reflejan el spawn del `RoomModel` si hay modelo, manteniendo fallback a `RoomEntity`.
+- `backend/src/test/java/com/hotelexchange/realtime/RoomStateServiceTest.java`
+  - Agrega cobertura para movimiento a tile `x`, tile `b`, tile con altura `1`, furniture blocker, pathfinding alrededor de `x`, pathfinding alrededor de `b`, y fallback rectangular sin modelo.
+- `backend/src/test/java/com/hotelexchange/room/RoomLayoutServiceTest.java`
+  - Nuevo test para `blockedTiles` con razones diferenciadas: `STRUCTURAL`, `FURNITURE`, `LEGACY_BLOCKER`.
+
+### Reglas de Validacion Actualizadas
+
+- `x/X`: el tile no existe. Error WebSocket/controlado: `Tile does not exist`.
+- `b/B`: el tile existe pero no es caminable estructuralmente. Error: `Tile is structurally blocked`.
+- `room_blocked_tiles`: se mantiene como blocker legacy/manual. Reason DTO: `LEGACY_BLOCKER`.
+- Furniture bloqueante: error: `Destination tile is blocked by furniture`.
+- `1..9`: por ahora son tiles existentes y caminables; la altura se conserva para render/futuro stacking.
+- Rooms sin `modelCode`: siguen usando fallback rectangular `width x height`.
+
+### Validaciones Ejecutadas
+
+```
+mvn test
+Tests run: 35, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+No se ejecuto `npm run build` porque no se tocaron archivos frontend ni tipos TypeScript.
+
+### Pendientes Tecnicos
+
+- Smoke manual recomendado con `trader/trader` y `broker/broker` para confirmar WebSocket, movement realtime y chat.
+- Considerar test de controlador/MockMvc para `GET /api/rooms/{id}` si el contrato REST crece.
+- Futuro: reglas de altura reales para `1..9` y stacking/furniture placement.
+
+---
+
 ## 2026-06-05 (FASE 4A.3 Geometry Fix — Continuación: Phaser Polygon bug + V7 + decor cleanup)
 
 ### Change Summary

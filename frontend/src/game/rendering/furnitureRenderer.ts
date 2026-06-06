@@ -37,6 +37,12 @@ export function renderFurniture(
       return renderCoffeeTable(scene, item, origin);
     case 'iso-sofa':
       return renderSofa(scene, item, origin);
+    case 'iso-market-screen':
+      return renderMarketScreen(scene, item, origin);
+    case 'iso-wall-sign':
+      return renderWallSign(scene, item, origin);
+    case 'iso-rug':
+      return renderRug(scene, item, origin);
   }
 }
 
@@ -327,6 +333,78 @@ export function drawLamp(scene: Phaser.Scene) {
   return children;
 }
 
+export function drawMarketScreen(scene: Phaser.Scene) {
+  const children: Phaser.GameObjects.GameObject[] = [
+    drawFurnitureShadow(scene, 80, 18, 8),
+    rect(scene, -58, -76, 116, 40, OUTLINE),
+    rect(scene, -54, -72, 108, 32, 0x121916),
+    rect(scene, -48, -66, 96, 1, 0x2f8b52),
+    rect(scene, -48, -45, 96, 1, 0x2f8b52),
+    label(scene, 0, -61, 'MARKET OPEN', '10px', '#8cff9c'),
+    label(scene, 0, -49, 'BTC +2.4  SPY +0.8', '8px', '#ffd94e'),
+  ];
+
+  return children;
+}
+
+export function drawWallSign(scene: Phaser.Scene) {
+  const children: Phaser.GameObjects.GameObject[] = [
+    drawFurnitureShadow(scene, 94, 18, 8),
+    rect(scene, -62, -68, 124, 32, OUTLINE),
+    rect(scene, -58, -64, 116, 24, 0x241a17),
+    rect(scene, -52, -58, 104, 12, 0x3b261f),
+    label(scene, 0, -52, 'EXCHANGE DESK', '10px', '#fff1cf'),
+    rect(scene, -50, -39, 100, 2, 0xd8a23d),
+  ];
+
+  return children;
+}
+
+export function drawCenteredRug(
+  scene: Phaser.Scene,
+  item: DrawableFallbackFurniture,
+) {
+  const children: Phaser.GameObjects.GameObject[] = [];
+  const center = tileOffset((item.width - 1) / 2, (item.height - 1) / 2);
+
+  for (let y = 0; y < item.height; y += 1) {
+    for (let x = 0; x < item.width; x += 1) {
+      const local = tileOffset(x, y);
+      const color = (x + y) % 2 === 0 ? 0x8d3c32 : 0x743028;
+      children.push(polygon(
+        scene,
+        local.x - center.x,
+        local.y - center.y,
+        diamondPoints(),
+        color,
+        0.82,
+        0x5a211c,
+        0.7,
+        1,
+      ));
+    }
+  }
+
+  for (const edge of carpetEdgeTiles(item)) {
+    const local = tileOffset(edge.x, edge.y);
+    children.push(polygon(
+      scene,
+      local.x - center.x,
+      local.y - center.y,
+      diamondPoints(0.76),
+      0xd8a23d,
+      0.16,
+      0xd8a23d,
+      0.38,
+      1,
+    ));
+  }
+
+  children.push(label(scene, 0, 0, 'HX', '11px', '#fff1cf'));
+
+  return children;
+}
+
 export function drawDoor(scene: Phaser.Scene) {
   const children: Phaser.GameObjects.GameObject[] = [
     drawFurnitureShadow(scene, 70, 24, 8),
@@ -413,6 +491,33 @@ function renderLamp(
   return renderWorldItem(scene, item, origin, drawLamp(scene));
 }
 
+function renderMarketScreen(
+  scene: Phaser.Scene,
+  item: DrawableFallbackFurniture,
+  origin: ScreenPoint,
+): RenderedFurniture {
+  return renderWorldItem(scene, item, origin, drawMarketScreen(scene));
+}
+
+function renderWallSign(
+  scene: Phaser.Scene,
+  item: DrawableFallbackFurniture,
+  origin: ScreenPoint,
+): RenderedFurniture {
+  return renderWorldItem(scene, item, origin, drawWallSign(scene));
+}
+
+function renderRug(
+  scene: Phaser.Scene,
+  item: DrawableFallbackFurniture,
+  origin: ScreenPoint,
+): RenderedFurniture {
+  const center = getTileCenter(item.x, item.y, origin);
+  const container = scene.add.container(center.x, center.y, drawCenteredRug(scene, item));
+  container.setDepth(center.y - TILE_HEIGHT);
+  return { container, layer: 'floor' };
+}
+
 function renderDoor(
   scene: Phaser.Scene,
   item: DrawableFallbackFurniture,
@@ -444,7 +549,14 @@ function polygon(
   strokeAlpha = 1,
   strokeWidth = 2,
 ) {
-  const object = scene.add.polygon(x, y, points, fill, alpha);
+  const bounds = polygonBounds(points);
+  const object = scene.add.polygon(
+    x + bounds.width / 2,
+    y + bounds.height / 2,
+    points,
+    fill,
+    alpha,
+  );
   if (stroke !== undefined && strokeWidth > 0) {
     object.setStrokeStyle(strokeWidth, stroke, strokeAlpha);
   }
@@ -467,11 +579,51 @@ function rect(
   return object;
 }
 
+function label(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  value: string,
+  fontSize: string,
+  color: string,
+) {
+  const object = scene.add.text(x, y, value, {
+    align: 'center',
+    color,
+    fontFamily: 'Courier New, Lucida Console, monospace',
+    fontSize,
+    fontStyle: 'bold',
+  });
+  object.setOrigin(0.5);
+  return object;
+}
+
 function moveChild<T extends Phaser.GameObjects.GameObject>(child: T, x: number, y: number) {
   const positioned = child as T & { x: number; y: number };
   positioned.x += x;
   positioned.y += y;
   return child;
+}
+
+function polygonBounds(points: number[]) {
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < points.length; index += 2) {
+    const x = points[index];
+    const y = points[index + 1];
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  return {
+    width: maxX - minX,
+    height: maxY - minY,
+  };
 }
 
 function diamondPoints(scale = 1) {
