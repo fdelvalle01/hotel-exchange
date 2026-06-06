@@ -1,5 +1,130 @@
 # Hotel Exchange AI Memory
 
+## 2026-06-05 23:57:53 -04:00 (FASE 4B - Inventory Basico)
+
+### Change Summary
+
+Implementada FASE 4B: inventario basico de furniture por usuario. No se implemento marketplace, order book, compra/venta, placement ni quitar furniture de sala. No se toco `RoomScene` para esta fase.
+
+### Base de Datos
+
+Nueva migracion:
+
+- `backend/src/main/resources/db/migration/V10__user_inventory.sql`
+
+Tabla creada:
+
+- `user_inventory`
+  - `id`
+  - `user_id`
+  - `catalog_item_id`
+  - `quantity CHECK (quantity >= 0)`
+  - `source`
+  - `created_at`
+  - `updated_at`
+  - unique `user_id, catalog_item_id`
+  - indices por `user_id` y `catalog_item_id`
+
+Seed inicial:
+
+- `trader`
+  - `green_leather_sofa x1`
+  - `dark_wood_coffee_table x1`
+  - `red_executive_chair x1`
+- `broker`
+  - `dark_wood_coffee_table x1`
+  - `red_executive_chair x1`
+
+La migracion inserta seed para usuarios existentes. `DataSeeder` tambien completa el inventario de forma idempotente despues de crear usuarios runtime, porque Flyway corre antes que el seeder en una DB fresca.
+
+### Backend
+
+Nuevos archivos:
+
+- `backend/src/main/java/com/hotelexchange/inventory/UserInventoryEntity.java`
+- `backend/src/main/java/com/hotelexchange/inventory/UserInventoryRepository.java`
+- `backend/src/main/java/com/hotelexchange/inventory/InventoryItemDto.java`
+- `backend/src/main/java/com/hotelexchange/inventory/InventoryResponseDto.java`
+- `backend/src/main/java/com/hotelexchange/inventory/UserInventoryService.java`
+- `backend/src/main/java/com/hotelexchange/inventory/UserInventoryController.java`
+
+Endpoint nuevo:
+
+```
+GET /api/me/inventory
+```
+
+Reglas:
+
+- requiere JWT valido
+- usa `@AuthenticationPrincipal AuthenticatedUser`
+- no acepta `userId` por parametro
+- no permite consultar inventario ajeno
+- devuelve metadata util de `furniture_catalog` mas `quantity`
+
+### Frontend
+
+Frontend minimo, sin UI visible:
+
+- `frontend/src/types/api.types.ts`
+  - agrega `InventoryItem`
+  - agrega `InventoryResponse`
+- `frontend/src/services/inventory.service.ts`
+  - agrega `getMyInventory(token)`
+
+### Tests
+
+Nuevos tests:
+
+- `backend/src/test/java/com/hotelexchange/config/DataSeederTest.java`
+  - confirma seed inicial de trader/broker.
+- `backend/src/test/java/com/hotelexchange/inventory/UserInventoryServiceTest.java`
+  - confirma metadata del catalogo en response.
+  - confirma que el service usa solo el user id autenticado.
+  - confirma missing user -> `NotFoundException`.
+  - confirma que quantity negativa se rechaza en entidad.
+- `backend/src/test/java/com/hotelexchange/inventory/UserInventoryControllerTest.java`
+  - confirma endpoint sin token -> 401.
+  - confirma `/api/me/inventory?userId=1` ignora query param y usa el principal autenticado.
+
+### Documentacion
+
+- `README.md`
+  - documenta `GET /api/me/inventory`.
+  - agrega ejemplo de response.
+  - actualiza roadmap de Phase 4.
+- `docs/ROOM_FURNITURE_ARCHITECTURE.md`
+  - marca inventory basico como implementado.
+  - mantiene placement/removal como futuro.
+
+### Validaciones Ejecutadas
+
+```
+mvn test
+Tests run: 46, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+
+npm run build
+1607 modules transformed
+build OK
+```
+
+Vite mantiene el warning esperado de chunk grande por Phaser.
+
+### Pendientes Tecnicos
+
+- Smoke manual:
+  - login `trader/trader`
+  - llamar `GET /api/me/inventory` con token
+  - login `broker/broker`
+  - confirmar inventario distinto
+  - confirmar rooms/movement/chat sin regresion
+- FASE 4B.1 futura: UI de inventario o panel debug.
+- Fase futura: placement desde inventario con backend autoritativo y eventos WebSocket.
+- Fase futura: devolver `renderOffset/depthOffset/scale` desde backend si se decide mover metadata visual fuera del frontend.
+
+---
+
 ## 2026-06-05 23:16:58 -04:00 (FASE 4A.6 - Furniture Catalog Mapping, Cleanup & Depth Fix)
 
 ### Change Summary

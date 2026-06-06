@@ -65,6 +65,29 @@ export interface RoomFurniture {
   state: Record<string, unknown> | null;
 }
 
+export interface InventoryItem {
+  id: number;
+  catalogItemId: number;
+  code: string;
+  name: string;
+  type: string;
+  spriteKey: string;
+  spritePath: string;
+  width: number;
+  height: number;
+  quantity: number;
+  canSit: boolean;
+  canWalk: boolean;
+  canStack: boolean;
+  blocksMovement: boolean;
+  interactionType: string;
+  tradeable: boolean;
+}
+
+export interface InventoryResponse {
+  items: InventoryItem[];
+}
+
 export interface AuthResponse {
   token: string;
   expiresAt: string;

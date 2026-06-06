@@ -110,8 +110,36 @@ Frontend example: [frontend/.env.example](frontend/.env.example)
 | --- | --- | --- | --- |
 | `POST` | `/api/auth/login` | No | Login with username/password and receive JWT |
 | `GET` | `/api/me` | Yes | Current authenticated user |
+| `GET` | `/api/me/inventory` | Yes | Current user's furniture inventory |
 | `GET` | `/api/rooms` | Yes | List available rooms |
 | `GET` | `/api/rooms/{roomId}` | Yes | Get room detail |
+
+Inventory response example:
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "catalogItemId": 1,
+      "code": "green_leather_sofa",
+      "name": "Green Leather Sofa",
+      "type": "FLOOR",
+      "spriteKey": "furniture_green_leather_sofa",
+      "spritePath": "/assets/furniture/green_leather_sofa.png",
+      "width": 3,
+      "height": 1,
+      "quantity": 1,
+      "canSit": true,
+      "canWalk": false,
+      "canStack": false,
+      "blocksMovement": true,
+      "interactionType": "SEAT",
+      "tradeable": false
+    }
+  ]
+}
+```
 
 ## WebSocket
 
@@ -222,7 +250,7 @@ With Docker Compose running, you can log in as `trader/trader` and `broker/broke
 
 - Phase 2: Durable multiplayer positions, room session persistence, stronger room state snapshots. Completed basic version.
 - Phase 3: Habbo-style base room gameplay with pathfinding, blocked tiles, layered rendering, walking avatars, and improved bubbles. Completed basic version.
-- Phase 4: Backend persistent furniture foundation started. Inventory, item ownership, furniture editing UI, and room layout editing are still future work.
+- Phase 4: Backend persistent furniture foundation and basic user inventory are implemented. Furniture placement/removal UI and room layout editing are still future work.
 - Phase 5: Marketplace/economy.
 - Phase 6: Keycloak integration and production identity migration.
 - Phase 7: Moderation, audit logs, observability, and horizontal WebSocket scaling.

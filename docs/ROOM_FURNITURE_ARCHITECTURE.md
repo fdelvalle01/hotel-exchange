@@ -39,6 +39,11 @@ FASE 4A moved Main Lobby furniture state into PostgreSQL:
 - `GET /api/rooms/{roomId}` returns `furniture` and backend-calculated `blockedTiles`.
 - WebSocket movement validation uses backend blockers generated from persisted furniture.
 - `frontend/src/game/data/mainLobbyFurniture.ts` remains only as a temporary fallback when the API returns no furniture.
+- FASE 4B adds basic quantity-based user inventory:
+  - `V10__user_inventory.sql` creates `user_inventory`.
+  - `GET /api/me/inventory` returns the authenticated user's furniture inventory.
+  - `DataSeeder` keeps `trader` and `broker` inventory seeds idempotent after runtime user creation.
+  - Inventory placement/removal is not implemented yet.
 
 Render metadata still lives in frontend TypeScript while art direction stabilizes:
 
@@ -75,7 +80,7 @@ Hotel Exchange will not:
 - Implement the Habbo protocol.
 - Become an emulator.
 - Recreate proprietary room names, item names, message names, or internal naming conventions.
-- Add inventory, marketplace, wallet, or trading furniture ownership in this documentation-only phase.
+- Add marketplace, wallet, order book, or trading furniture ownership in the inventory MVP.
 
 ## Target Architecture Overview
 
@@ -85,7 +90,7 @@ The future room/furniture system should be split into these backend-owned domain
 - `RoomModel`: optional reusable layout template for dimensions, base height map, spawn position, and base blocked tiles.
 - `FurnitureCatalog`: reusable definition of an item type.
 - `RoomFurniture`: one placed instance of a catalog item in a room.
-- `UserInventory`: future user-owned item quantities or item instances.
+- `UserInventory`: user-owned furniture quantities; basic read-only inventory is implemented, placement is future.
 - `RoomPermission`: future explicit room permissions beyond owner/admin.
 - `RoomRuntimeState`: in-memory presence, active users, transient movement, and derived blocked tiles.
 
@@ -195,7 +200,7 @@ Recommended notes:
 
 ### UserInventoryEntity
 
-Purpose: future user inventory ownership.
+Purpose: user inventory ownership.
 
 Fields:
 
@@ -209,7 +214,8 @@ Fields:
 
 Recommended notes:
 
-- For the first inventory phase, quantity-based inventory is enough for stackable/simple items.
+- The first inventory phase uses quantity-based rows in `user_inventory`.
+- `GET /api/me/inventory` is authenticated and never accepts a target `userId`.
 - If Hotel Exchange later needs unique item metadata per inventory object, introduce `UserInventoryItemEntity` rather than overloading quantity rows.
 - `source` can start with `SEED`, `ADMIN_GRANT`, `REWARD`, `PURCHASE`.
 
@@ -290,6 +296,37 @@ Fields:
 - `createdAt`
 - `updatedAt`
 
+### InventoryItemDto
+
+Purpose: one authenticated user's owned furniture catalog row plus quantity.
+
+Fields:
+
+- `id`
+- `catalogItemId`
+- `code`
+- `name`
+- `type`
+- `spriteKey`
+- `spritePath`
+- `width`
+- `height`
+- `quantity`
+- `canSit`
+- `canWalk`
+- `canStack`
+- `blocksMovement`
+- `interactionType`
+- `tradeable`
+
+### InventoryResponseDto
+
+Purpose: inventory payload for `GET /api/me/inventory`.
+
+Fields:
+
+- `items`
+
 ### PlaceFurnitureRequest
 
 Purpose: request to place an inventory/catalog item into a room.
@@ -343,7 +380,7 @@ Future endpoints can be introduced incrementally:
 - `PATCH /api/rooms/{roomId}/furniture/{roomFurnitureId}` moves/rotates furniture.
 - `PATCH /api/rooms/{roomId}/furniture/{roomFurnitureId}/state` changes interaction state.
 - `DELETE /api/rooms/{roomId}/furniture/{roomFurnitureId}` removes furniture.
-- `GET /api/me/inventory` future inventory endpoint.
+- `GET /api/me/inventory` returns the authenticated user's read-only inventory.
 
 ## Proposed WebSocket Events
 
@@ -521,7 +558,7 @@ Recommended indexes:
 - `(owner_user_id)`
 - `(catalog_item_id)`
 
-### Future User Inventory Shape
+### User Inventory Shape
 
 Table: `user_inventory`
 
@@ -621,10 +658,13 @@ backend RoomDetailDto
 
 ### Phase 4.6: Inventory MVP
 
-- Add `user_inventory`.
-- Let users own quantities of furniture.
-- Place from inventory into a room.
-- Remove from room back to inventory.
+- Implemented in FASE 4B as basic read-only inventory:
+  - `user_inventory`
+  - seeded `trader` and `broker` furniture quantities
+  - `GET /api/me/inventory`
+- Future:
+  - Place from inventory into a room.
+  - Remove from room back to inventory.
 
 ### Phase 4.7: Height And Stacking
 
